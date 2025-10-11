@@ -6,16 +6,17 @@ const {
     updateDestination,
     deleteDestination
 } = require('./destination.controller.js');
+const { checkToken } = require("../../middleware/token.js");
 
 const router = express.Router();
 
 router.route('/')
-    .post(createDestination)
-    .get(getAllDestinations);
+    .post(checkToken,createDestination)
+    .get(checkToken,getAllDestinations);
 
 router.route('/:destinationId')
-    .get(getDestinationById)
-    .put(updateDestination)
-    .delete(deleteDestination);
+    .get(checkToken,getDestinationById)
+    .put(checkToken,updateDestination)
+    .delete(checkToken,deleteDestination);
    
 module.exports = router;

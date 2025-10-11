@@ -479,10 +479,51 @@ exports.deleteAssignLorry = async (req, res) => {
     });
   }
 };
+exports.updateBasicinfo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userid } = req.tokenData;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ID format.",
+      });
+    }
+
+    const deletedAssignment = await AssignLorry.findByIdAndUpdate(
+      { _id: id },
+      { ...req.body, updatedBy: userid, updatedAt: new Date() },
+      { new: true }
+    );
+
+    if (!deletedAssignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found.",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Assignment updated successfully.",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete assignment.",
+      error: error.message,
+    });
+  }
+};
 exports.addContainer = async (req, res) => {
   try {
     const { id } = req.params;
     const newContainer = req.body;
+    const { userid } = req.tokenData;
+    newContainer.createdBy = userid;
+    newContainer.updatedBy = userid;
+    newContainer.createdAt = new Date();
+    newContainer.updatedAt = new Date();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res
@@ -492,7 +533,7 @@ exports.addContainer = async (req, res) => {
 
     const updatedAssignment = await AssignLorry.findByIdAndUpdate(
       id,
-      { $push: { container: newContainer } },
+      { $push: { containers: newContainer } },
       { new: true, runValidators: true }
     );
 

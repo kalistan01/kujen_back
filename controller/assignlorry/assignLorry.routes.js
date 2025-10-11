@@ -7,8 +7,9 @@ router
   .post("/", checkToken, assignLorryController.createAssignLorry)
   .get("/",checkToken, assignLorryController.getAllAssignLorries);
 router
-  .get("/:id", assignLorryController.getAssignLorryByIds)
-  .delete("/:id", checkToken,assignLorryController.deleteAssignLorry);
+  .get("/:id", checkToken,assignLorryController.getAssignLorryByIds)
+  .delete("/:id", checkToken,assignLorryController.deleteAssignLorry)
+  .patch("/:id", checkToken,assignLorryController.updateBasicinfo);
 router.post("/:id/containers", checkToken,assignLorryController.addContainer);
 router
   .delete("/:id/containers/:containerId", checkToken,assignLorryController.removeContainer)
