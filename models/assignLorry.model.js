@@ -37,6 +37,11 @@ const assignLorrySchema = new mongoose.Schema(
 
     containers: [
       {
+        status: {
+          type: String,
+          enum: ["in-progress", "completed", "pending"],
+          default: "pending",
+        },
         containerNo: {
           type: String,
           required: [true, "Container No. is required."],
@@ -72,7 +77,7 @@ const assignLorrySchema = new mongoose.Schema(
           type: Number,
           required: [true, "Day hire amount is required."],
         },
-       
+
         outHire: {
           type: Number,
         },
@@ -93,11 +98,7 @@ const assignLorrySchema = new mongoose.Schema(
         return: {
           type: Number,
         },
-        status: {
-          type: String,
-          enum: ["in-progress", "completed", "pending"],
-          default: "pending",
-        },
+
         ot: {
           containerNo: {
             type: String,
