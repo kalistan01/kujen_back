@@ -2,15 +2,20 @@ require("dotenv").config();
 const connectDatabase = require("./config/mongodb");
 const express = require("express");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+
 const bodyParser = require('body-parser');
+const cookieParser = require("cookie-parser");
 const app = express();
+app.use(cookieParser());
 const corsOptions = {
-  origin: "*",
+  origin:[ process.env.CORS_ORIGIN],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   credentials: true,
 };
 // 
 app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(bodyParser.json({ limit: '20mb' }));
 app.use(bodyParser.urlencoded({ limit: '20mb', extended: true }));
 
@@ -30,7 +35,20 @@ app.get("/", (req, res) => {
   res.status(200).send("API is running.");
 });
 const routes = require("./routes");
-//api endpoints
+app.get("/api/v1/auth/check", (req, res) => {
+  const token = req.cookies.token;
+  
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_KEY);
+
+    res.status(200).json({ message: "Authenticated", user: decoded });
+  } catch {
+    res.status(401).json({ message: "Invalid token" });
+  }
+});
+
 app.use("/api/v1", routes);
 app.use((req, res, next) => {
   console.log(req.method, req.originalUrl);

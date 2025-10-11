@@ -51,31 +51,39 @@ exports.adminsignUp = async (req, res) => {
 exports.adminlogIn = async (req, res) => {
   try {
     const { password, email } = req.body;
-    const admin = await User.findOne({ email: email }).select("+password");
 
+    const admin = await User.findOne({ email }).select("+password");
     if (!admin) {
       return res.status(404).json({
-        message: "invalid admin",
+        message: "Invalid admin",
         success: false,
-        error: "admin Not Found",
+        error: "Admin not found",
       });
     }
 
     const passwordMatch = await bcrypt.compare(password, admin.password);
-
     if (!passwordMatch) {
-      return res.status(404).json({
+      return res.status(401).json({
         message: "Invalid credentials",
         success: false,
       });
     }
 
     const jsonToken = createToken(admin._id, admin.roleId);
+
+    // Set token in HTTP-only cookie
+    res.cookie("token", jsonToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // only secure in production
+      sameSite: "Strict", // prevents CSRF
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
     admin.password = undefined;
+
     return res.status(200).json({
       message: "Login successful",
       success: true,
-      token: jsonToken,
       user: "admin",
     });
   } catch (error) {
@@ -86,11 +94,10 @@ exports.adminlogIn = async (req, res) => {
     });
   }
 };
+
 exports.adminReset = async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    // Check if admin exists
     const admin = await User.findOne({ email });
     if (!admin) {
       return res.status(404).json({
@@ -275,7 +282,7 @@ exports.deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
     const { status } = req.headers;
-    
+
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res
         .status(400)

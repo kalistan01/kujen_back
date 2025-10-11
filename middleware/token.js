@@ -15,26 +15,26 @@ module.exports = {
     return jsonToken;
   },
 
-  checkToken: (req, res, next) => {
-    let token = req.get("Authorization");
-    if (token) {
-      token = token.slice(7);
-      jwt.verify(token, process.env.JWT_KEY, (err, tokenData) => {
-        if (err) {
-          return res.status(401).json({
-            success: false,
-            error: "Invalid Token",
-          });
-        } else {
-          req.tokenData = tokenData;
-          next();
-        }
-      });
-    } else {
+ checkToken: (req, res, next) => {
+    const token = req.cookies.token; // 👈 Read from cookie
+
+    if (!token) {
       return res.status(401).json({
         success: false,
-        error: "Access Denied! Unauthorized res",
+        error: "Access Denied! No token provided",
       });
     }
+
+    jwt.verify(token, process.env.JWT_KEY, (err, tokenData) => {
+      if (err) {
+        return res.status(401).json({
+          success: false,
+          error: "Invalid Token",
+        });
+      }
+
+      req.tokenData = tokenData;
+      next();
+    });
   },
 };
