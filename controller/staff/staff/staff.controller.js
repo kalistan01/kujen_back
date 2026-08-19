@@ -1,6 +1,7 @@
 const { createToken } = require("../../../middleware/token");
 const { User, Role } = require("../../../models");
 const { publicUser } = require("../../../middleware/requireAdmin");
+const { authCookie } = require("../../../config/cookie");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 
@@ -76,12 +77,7 @@ exports.adminlogIn = async (req, res) => {
     const jsonToken = createToken(admin._id, admin.roleId);
 
     // Set token in HTTP-only cookie
-    res.cookie("token", jsonToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // only secure in production
-      sameSite: "Strict", // prevents CSRF
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    res.cookie("token", jsonToken, authCookie);
 
     admin.password = undefined;
 

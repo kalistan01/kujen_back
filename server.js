@@ -6,13 +6,19 @@ const jwt = require("jsonwebtoken");
 const { User } = require("./models");
 const { publicUser } = require("./middleware/requireAdmin");
 const { activityLog } = require("./middleware/activityLog");
+const { authCookie } = require("./config/cookie");
 
 const bodyParser = require('body-parser');
 const cookieParser = require("cookie-parser");
 const app = express();
 app.use(cookieParser());
+app.set("trust proxy", 1);
+const corsOrigins = String(process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const corsOptions = {
-  origin:[ process.env.CORS_ORIGIN],
+  origin: corsOrigins.length ? corsOrigins : true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
   credentials: true,
 };
@@ -65,9 +71,10 @@ app.get("/api/v1/auth/check", async (req, res) => {
 });
 app.post("/api/v1/auth/logout", (req, res) => {
   res.clearCookie("token", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "Strict",
+    httpOnly: authCookie.httpOnly,
+    secure: authCookie.secure,
+    sameSite: authCookie.sameSite,
+    path: authCookie.path,
   });
   res.status(200).json({ message: "Logged out" });
 });
@@ -94,4 +101,5 @@ app.use((err, req, res, next) => {
 });
 connectDatabase();
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Server start on port:${PORT}`));
+const HOST = process.env.NODE_ENV === "production" ? "127.0.0.1" : "0.0.0.0";
+app.listen(PORT, HOST, () => console.log(`Server start on ${HOST}:${PORT}`));
