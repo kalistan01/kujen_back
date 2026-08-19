@@ -1,5 +1,6 @@
 const { createToken } = require("../../../middleware/token");
 const { User, Role } = require("../../../models");
+const { publicUser } = require("../../../middleware/requireAdmin");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 
@@ -52,7 +53,10 @@ exports.adminlogIn = async (req, res) => {
   try {
     const { password, email } = req.body;
 
-    const admin = await User.findOne({ email }).select("+password");
+    const admin = await User.findOne({ email }).select("+password").populate(
+      "roleId",
+      "roleName admin"
+    );
     if (!admin) {
       return res.status(404).json({
         message: "Invalid admin",
@@ -84,7 +88,7 @@ exports.adminlogIn = async (req, res) => {
     return res.status(200).json({
       message: "Login successful",
       success: true,
-      user: "admin",
+      user: publicUser(admin),
     });
   } catch (error) {
     return res.status(500).json({

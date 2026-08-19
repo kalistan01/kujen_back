@@ -3,6 +3,9 @@ const connectDatabase = require("./config/mongodb");
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const { User } = require("./models");
+const { publicUser } = require("./middleware/requireAdmin");
+const { activityLog } = require("./middleware/activityLog");
 
 const bodyParser = require('body-parser');
 const cookieParser = require("cookie-parser");
@@ -28,6 +31,9 @@ app.use(
   })
 );
 app.use((req, res, next) => {
+  if (String(req.originalUrl || "").includes("/export/")) {
+    return next();
+  }
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   next();
 });
@@ -35,18 +41,35 @@ app.get("/", (req, res) => {
   res.status(200).send("API is running.");
 });
 const routes = require("./routes");
-app.get("/api/v1/auth/check", (req, res) => {
+app.use("/api/v1", activityLog);
+app.get("/api/v1/auth/check", async (req, res) => {
   const token = req.cookies.token;
-  
+
   if (!token) return res.status(401).json({ message: "Unauthorized" });
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_KEY);
+    const user = await User.findById(decoded.userid).populate(
+      "roleId",
+      "roleName admin"
+    );
+    if (!user) return res.status(401).json({ message: "Unauthorized" });
 
-    res.status(200).json({ message: "Authenticated", user: decoded });
+    res.status(200).json({
+      message: "Authenticated",
+      user: publicUser(user),
+    });
   } catch {
     res.status(401).json({ message: "Invalid token" });
   }
+});
+app.post("/api/v1/auth/logout", (req, res) => {
+  res.clearCookie("token", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Strict",
+  });
+  res.status(200).json({ message: "Logged out" });
 });
 
 app.use("/api/v1", routes);

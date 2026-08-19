@@ -1,11 +1,32 @@
 const express = require("express");
 const router = express.Router();
 const assignLorryController = require("./assignLorry.controller");
+const assignmentExport = require("./assignmentExport.controller");
 const { checkToken } = require("../../middleware/token");
 
 router
   .post("/", checkToken, assignLorryController.createAssignLorry)
-  .get("/",checkToken, assignLorryController.getAllAssignLorries);
+  .get("/", checkToken, assignLorryController.getAllAssignLorries);
+router.get(
+  "/export/pdf",
+  checkToken,
+  assignmentExport.exportAssignmentsPdf
+);
+router.get(
+  "/export/excel",
+  checkToken,
+  assignmentExport.exportAssignmentsExcel
+);
+router.get(
+  "/:id/export/pdf",
+  checkToken,
+  assignmentExport.exportAssignmentPdf
+);
+router.get(
+  "/:id/export/excel",
+  checkToken,
+  assignmentExport.exportAssignmentExcel
+);
 router
   .get("/:id", checkToken,assignLorryController.getAssignLorryByIds)
   .delete("/:id", checkToken,assignLorryController.deleteAssignLorry)

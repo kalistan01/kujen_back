@@ -7,5 +7,6 @@ router.use('/lorry', require('./controller/lorry/lorry.routes'));
 router.use('/assignlorry', require('./controller/assignlorry/assignLorry.routes'));
 router.use('/destination', require('./controller/destination/destination.routes'));
 router.use('/dashboard', require('./controller/dashboard/dashboad.routes'));
+router.use('/logs', require('./controller/log/log.routes'));
 
 module.exports = router;
