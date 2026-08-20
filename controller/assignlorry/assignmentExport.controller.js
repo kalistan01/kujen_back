@@ -3,14 +3,44 @@ const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
 
+const CHARGE_FIELDS = [
+  ["weight", "Weight"],
+  ["dayHire", "Day Hire"],
+  ["outHire", "Out Hire"],
+  ["other", "Other"],
+  ["heldUp", "Held Up"],
+  ["return", "Return"],
+];
+
+const COMMISSION_FIELDS = [
+  ["agentFee", "Agent Fee"],
+  ["transportCommission", "Transport Commission"],
+];
+
+const toAmount = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const money = (value) =>
-  Number(value || 0).toLocaleString("en-IN", {
+  `Rs ${toAmount(value).toLocaleString("en-IN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  });
+  })}`;
 
 const formatDate = (value) => {
   if (!value) return "";
+  if (typeof value === "string") {
+    const part = value.substring(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(part)) {
+      const [y, m, d] = part.split("-").map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  }
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString("en-GB", {
@@ -37,13 +67,7 @@ const nameOf = (value) =>
   value && typeof value === "object" ? value.fullName || "" : value || "";
 
 const containerTotal = (c = {}) =>
-  (c.weight || 0) +
-  (c.dayHire || 0) +
-  (c.outHire || 0) +
-  (c.other || 0) +
-  (c.heldUp || 0) +
-  (c.agentFee || 0) +
-  (c.return || 0);
+  CHARGE_FIELDS.reduce((sum, [key]) => sum + toAmount(c[key]), 0);
 
 const fileBase = (assignment) =>
   `RG-Brothers-BL-${assignment?.blNo || "assignment"}`.replace(
@@ -63,6 +87,41 @@ const ownerLabel = (c = {}) =>
 const destLabel = (c = {}) =>
   c.destinationlocation || c.destination?.location || "";
 
+const containerPaid = (c = {}) =>
+  toAmount(c.advanced) + toAmount(c.balancePaid);
+
+const assignmentFinancials = (containers = []) => {
+  const charges = Object.fromEntries(
+    CHARGE_FIELDS.map(([key]) => [
+      key,
+      containers.reduce((sum, c) => sum + toAmount(c?.[key]), 0),
+    ])
+  );
+  const commissions = Object.fromEntries(
+    COMMISSION_FIELDS.map(([key]) => [
+      key,
+      containers.reduce((sum, c) => sum + toAmount(c?.[key]), 0),
+    ])
+  );
+  const total = CHARGE_FIELDS.reduce((sum, [key]) => sum + charges[key], 0);
+  const advanced = containers.reduce(
+    (sum, c) => sum + toAmount(c?.advanced),
+    0
+  );
+  const balancePaid = containers.reduce(
+    (sum, c) => sum + toAmount(c?.balancePaid),
+    0
+  );
+  return {
+    charges,
+    commissions,
+    total,
+    advanced,
+    balancePaid,
+    remaining: total - advanced - balancePaid,
+  };
+};
+
 async function loadAssignment(id) {
   if (!mongoose.Types.ObjectId.isValid(id)) return null;
   const assignment = await AssignLorry.findById(id)
@@ -79,7 +138,9 @@ async function loadAssignment(id) {
     .lean();
   if (!assignment) return null;
 
-  const containers = (assignment.containers || []).map((c) => ({
+  const containers = (assignment.containers || [])
+    .filter((c) => c && (c.containerNo || c._id))
+    .map((c) => ({
     ...c,
     lorryNum: c.lorryNum || c.lorryId?.lorryNum,
     capacity: c.capacity || c.lorryId?.capacity,
@@ -137,10 +198,14 @@ async function buildExcel(assignment) {
     { header: "Weight", key: "weight", width: 12 },
     { header: "Day Hire", key: "dayHire", width: 12 },
     { header: "Advanced", key: "advanced", width: 12 },
+    { header: "Advanced Date", key: "advancedDate", width: 14 },
+    { header: "Balance Paid", key: "balancePaid", width: 14 },
+    { header: "Balance Date", key: "balanceDate", width: 14 },
     { header: "Out Hire", key: "outHire", width: 12 },
     { header: "Other", key: "other", width: 12 },
     { header: "Held Up", key: "heldUp", width: 12 },
     { header: "Agent Fee", key: "agentFee", width: 12 },
+    { header: "Transport Commission", key: "transportCommission", width: 18 },
     { header: "Return", key: "return", width: 12 },
     { header: "Container Total", key: "total", width: 14 },
     { header: "Paid", key: "paid", width: 12 },
@@ -155,10 +220,12 @@ async function buildExcel(assignment) {
     "weight",
     "dayHire",
     "advanced",
+    "balancePaid",
     "outHire",
     "other",
     "heldUp",
     "agentFee",
+    "transportCommission",
     "return",
     "total",
     "paid",
@@ -173,10 +240,12 @@ async function buildExcel(assignment) {
     weight: 0,
     dayHire: 0,
     advanced: 0,
+    balancePaid: 0,
     outHire: 0,
     other: 0,
     heldUp: 0,
     agentFee: 0,
+    transportCommission: 0,
     return: 0,
     total: 0,
     paid: 0,
@@ -185,7 +254,7 @@ async function buildExcel(assignment) {
 
   containers.forEach((c) => {
     const total = containerTotal(c);
-    const paid = c.advanced || 0;
+    const paid = containerPaid(c);
     const row = {
       blNo: assignment.blNo || "",
       status: (assignment.status || "pending").replace(/-/g, " "),
@@ -203,14 +272,18 @@ async function buildExcel(assignment) {
       destination: c.containerNo ? destLabel(c) : "",
       loadingDate: formatDate(c.loadingDate),
       demoundDate: formatDate(c.demoundDate),
-      weight: Number(c.weight || 0),
-      dayHire: Number(c.dayHire || 0),
-      advanced: Number(c.advanced || 0),
-      outHire: Number(c.outHire || 0),
-      other: Number(c.other || 0),
-      heldUp: Number(c.heldUp || 0),
-      agentFee: Number(c.agentFee || 0),
-      return: Number(c.return || 0),
+      weight: toAmount(c.weight),
+      dayHire: toAmount(c.dayHire),
+      advanced: toAmount(c.advanced),
+      advancedDate: formatDate(c.advancedDate),
+      balancePaid: toAmount(c.balancePaid),
+      balanceDate: formatDate(c.balanceDate),
+      outHire: toAmount(c.outHire),
+      other: toAmount(c.other),
+      heldUp: toAmount(c.heldUp),
+      agentFee: toAmount(c.agentFee),
+      transportCommission: toAmount(c.transportCommission),
+      return: toAmount(c.return),
       total,
       paid,
       balance: total - paid,
@@ -254,9 +327,7 @@ function buildPdf(assignment) {
     const gold = "#C5CCD4";
     const pageW = doc.page.width;
     const containers = assignment.containers || [];
-    const total = containers.reduce((sum, c) => sum + containerTotal(c), 0);
-    const advanced = containers.reduce((sum, c) => sum + (c.advanced || 0), 0);
-    const remaining = total - advanced;
+    const fin = assignmentFinancials(containers);
     const status = (assignment.status || "pending").replace(/-/g, " ");
 
     doc.rect(0, 0, pageW, 78).fill(navy);
@@ -303,7 +374,7 @@ function buildPdf(assignment) {
         const x = 36 + col * colW;
         const yy = y + row * 28;
         doc.fillColor("#667085").font("Helvetica").fontSize(8).text(item[0], x, yy);
-        doc.fillColor(navy).font("Helvetica-Bold").fontSize(10).text(String(item[1] || "—"), x, yy + 11, {
+        doc.fillColor(navy).font("Helvetica-Bold").fontSize(10).text(String(item[1] ?? "—") || "—", x, yy + 11, {
           width: colW - 8,
         });
       });
@@ -328,7 +399,7 @@ function buildPdf(assignment) {
 
     containers.forEach((c, index) => {
       const tot = containerTotal(c);
-      const paid = c.advanced || 0;
+      const paid = containerPaid(c);
       if (y > 620) {
         doc.addPage();
         y = 40;
@@ -354,17 +425,29 @@ function buildPdf(assignment) {
       const charges = [
         ["Weight", c.weight],
         ["Day Hire", c.dayHire],
-        ["Advanced", c.advanced],
+        [
+          c.advancedDate
+            ? `Advanced (${formatDate(c.advancedDate)})`
+            : "Advanced",
+          c.advanced,
+        ],
+        [
+          c.balanceDate
+            ? `Balance Paid (${formatDate(c.balanceDate)})`
+            : "Balance Paid",
+          c.balancePaid,
+        ],
         ["Out Hire", c.outHire],
         ["Other", c.other],
         ["Held Up", c.heldUp],
         ["Agent Fee", c.agentFee],
+        ["Transport Commission", c.transportCommission],
         ["Return", c.return],
       ];
       const tableTop = y;
       charges.forEach((row, i) => {
-        const col = i < 4 ? 0 : 1;
-        const rowI = i % 4;
+        const col = i % 2;
+        const rowI = Math.floor(i / 2);
         const x = 36 + col * ((pageW - 72) / 2);
         const yy = tableTop + rowI * 16;
         doc.fillColor("#667085").font("Helvetica").fontSize(9).text(row[0], x, yy);
@@ -373,7 +456,7 @@ function buildPdf(assignment) {
           align: "right",
         });
       });
-      y = tableTop + 72;
+      y = tableTop + Math.ceil(charges.length / 2) * 16 + 8;
 
       const boxW = (pageW - 88) / 3;
       [
@@ -391,28 +474,53 @@ function buildPdf(assignment) {
     });
 
     section("Financial summary");
-    [
-      ["Total", money(total)],
-      ["Advanced", money(advanced)],
-      ["Remaining", money(remaining)],
-    ].forEach((row, i) => {
-      doc.fillColor("#667085").font("Helvetica").fontSize(10).text(row[0], 320, y + i * 16);
-      doc.fillColor(navy).font("Helvetica-Bold").text(row[1], 400, y + i * 16, {
-        width: 160,
-        align: "right",
-      });
+    const summaryRows = [
+      ...CHARGE_FIELDS.map(([key, label]) => [label, money(fin.charges[key]), false]),
+      ["Total", money(fin.total), false],
+      ["Advanced", money(fin.advanced), false],
+      ["Balance Paid", money(fin.balancePaid), false],
+      ["Remaining", money(fin.remaining), true],
+      ...COMMISSION_FIELDS.map(([key, label]) => [
+        label,
+        money(fin.commissions[key]),
+        false,
+      ]),
+    ];
+    if (y + summaryRows.length * 16 > 760) {
+      doc.addPage();
+      y = 40;
+    }
+    summaryRows.forEach((row, i) => {
+      const highlight = Boolean(row[2]);
+      doc
+        .fillColor(highlight ? navy : "#667085")
+        .font(highlight ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(10)
+        .text(row[0], 320, y + i * 16);
+      doc
+        .fillColor(navy)
+        .font("Helvetica-Bold")
+        .text(row[1], 400, y + i * 16, {
+          width: 160,
+          align: "right",
+        });
     });
-    y += 58;
+    y += summaryRows.length * 16 + 16;
 
     section("Record");
     doc.fillColor(navy).font("Helvetica").fontSize(9)
       .text(`Created by ${assignment.createdBy || "—"}  ·  ${formatDateTime(assignment.createdAt)}`, 36, y);
     doc.text(`Updated by ${assignment.updatedBy || "—"}  ·  ${formatDateTime(assignment.updatedAt)}`, 36, y + 14);
+    y += 40;
 
+    if (y > 800) {
+      doc.addPage();
+      y = 40;
+    }
     doc.fillColor("#667085").fontSize(8).text(
       `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
       36,
-      800,
+      y,
       { width: pageW - 72, align: "center" }
     );
 

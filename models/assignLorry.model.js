@@ -88,11 +88,25 @@ const assignLorrySchema = new mongoose.Schema(
           type: Number,
           required: [true, "Advanced payment amount is required."],
         },
+        advancedDate: {
+          type: Date,
+          default: Date.now,
+        },
+        balancePaid: {
+          type: Number,
+          default: 0,
+        },
+        balanceDate: {
+          type: Date,
+        },
         heldUp: {
           type: Number,
         },
 
         agentFee: {
+          type: Number,
+        },
+        transportCommission: {
           type: Number,
         },
         return: {

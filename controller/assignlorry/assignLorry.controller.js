@@ -409,6 +409,15 @@ exports.getAssignLorryByIds = async (req, res) => {
       });
     }
     const newassignment = assignment[0];
+    if (!newassignment) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found.",
+      });
+    }
+    newassignment.containers = (newassignment.containers || []).filter(
+      (c) => c && (c.containerNo || c._id)
+    );
 
     const statusCount = newassignment.containers.reduce(
       (acc, container) => {
@@ -424,9 +433,9 @@ exports.getAssignLorryByIds = async (req, res) => {
     );
 
     // Determine overall status
-    const allCompleted = newassignment.containers.every(
-      (c) => c.status === "completed"
-    );
+    const allCompleted =
+      newassignment.containers.length > 0 &&
+      newassignment.containers.every((c) => c.status === "completed");
     const overallStatus = allCompleted ? "completed" : "pending";
 
     // Combine with assignment
@@ -524,6 +533,12 @@ exports.addContainer = async (req, res) => {
     newContainer.updatedBy = userid;
     newContainer.createdAt = new Date();
     newContainer.updatedAt = new Date();
+    if (!newContainer.advancedDate) {
+      newContainer.advancedDate = new Date();
+    }
+    if (newContainer.balancePaid && !newContainer.balanceDate) {
+      newContainer.balanceDate = new Date();
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res
@@ -611,9 +626,14 @@ exports.updateContainerDetails = async (req, res) => {
       other,
       heldUp,
       agentFee,
+      transportCommission,
       status,
     } = req.body;
     const returns = req.body.return;
+    const advancedDate = req.body.advancedDate || new Date();
+    const balancePaid = req.body.balancePaid || 0;
+    const balanceDate =
+      req.body.balanceDate || (balancePaid ? new Date() : undefined);
     const { userid } = req.tokenData;
 
     if (
@@ -640,8 +660,12 @@ exports.updateContainerDetails = async (req, res) => {
           "containers.$.outHire": outHire,
           "containers.$.other": other,
           "containers.$.advanced": advanced,
+          "containers.$.advancedDate": advancedDate,
+          "containers.$.balancePaid": balancePaid,
+          "containers.$.balanceDate": balanceDate,
           "containers.$.heldUp": heldUp,
           "containers.$.agentFee": agentFee,
+          "containers.$.transportCommission": transportCommission,
           "containers.$.status": status,
           "containers.$.return": returns,
           "containers.$.updatedBy": userid,
@@ -669,6 +693,171 @@ exports.updateContainerDetails = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to update container details.",
+      error: error.message,
+    });
+  }
+};
+exports.payContainerBalance = async (req, res) => {
+  try {
+    const { id, containerId } = req.params;
+    const { userid } = req.tokenData;
+    const balanceDate = req.body.balanceDate || new Date();
+
+    if (
+      !mongoose.Types.ObjectId.isValid(id) ||
+      !mongoose.Types.ObjectId.isValid(containerId)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid ID format provided." });
+    }
+
+    const assignment = await AssignLorry.findById(id);
+    if (!assignment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
+    }
+
+    const container = assignment.containers.id(containerId);
+    if (!container) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Container does not exist." });
+    }
+
+    const chargeKeys = [
+      "weight",
+      "dayHire",
+      "outHire",
+      "other",
+      "heldUp",
+      "return",
+    ];
+    const total = chargeKeys.reduce(
+      (sum, key) => sum + Number(container[key] || 0),
+      0
+    );
+    const remaining =
+      total -
+      Number(container.advanced || 0) -
+      Number(container.balancePaid || 0);
+
+    if (remaining <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This container has no remaining balance.",
+      });
+    }
+
+    const updatedAssignment = await AssignLorry.findOneAndUpdate(
+      { _id: id, "containers._id": containerId },
+      {
+        $set: {
+          "containers.$.balancePaid":
+            Number(container.balancePaid || 0) + remaining,
+          "containers.$.balanceDate": balanceDate,
+          "containers.$.updatedBy": userid,
+          "containers.$.updatedAt": new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Balance paid successfully.",
+      data: updatedAssignment,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to pay container balance.",
+      error: error.message,
+    });
+  }
+};
+const hireChargeKeys = [
+  "weight",
+  "dayHire",
+  "outHire",
+  "other",
+  "heldUp",
+  "return",
+];
+const remainingHire = (container) => {
+  const total = hireChargeKeys.reduce(
+    (sum, key) => sum + Number(container[key] || 0),
+    0
+  );
+  return (
+    total -
+    Number(container.advanced || 0) -
+    Number(container.balancePaid || 0)
+  );
+};
+exports.payContainersBalance = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userid } = req.tokenData;
+    const containerIds = Array.isArray(req.body.containerIds)
+      ? req.body.containerIds
+      : [];
+    const balanceDate = req.body.balanceDate || new Date();
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid ID format provided." });
+    }
+    if (!containerIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Select at least one container.",
+      });
+    }
+
+    const assignment = await AssignLorry.findById(id);
+    if (!assignment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
+    }
+
+    let paidCount = 0;
+    containerIds.forEach((containerId) => {
+      if (!mongoose.Types.ObjectId.isValid(containerId)) return;
+      const container = assignment.containers.id(containerId);
+      if (!container) return;
+      const remaining = remainingHire(container);
+      if (remaining <= 0) return;
+      container.balancePaid = Number(container.balancePaid || 0) + remaining;
+      container.balanceDate = balanceDate;
+      container.updatedBy = userid;
+      container.updatedAt = new Date();
+      paidCount += 1;
+    });
+
+    if (!paidCount) {
+      return res.status(400).json({
+        success: false,
+        message: "None of the selected containers have a remaining balance.",
+      });
+    }
+
+    assignment.updatedBy = userid;
+    await assignment.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Balances paid successfully.",
+      data: assignment,
+      paidCount,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to pay container balances.",
       error: error.message,
     });
   }

@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const { User, ActivityLog } = require("../models");
+const { User, ActivityLog, Destination } = require("../models");
 
 const SKIP_PREFIXES = ["/logs"];
 
@@ -90,8 +90,15 @@ function describeAction(req) {
       return { module: "destination", action: "Created destination" };
     if (method === "PUT")
       return { module: "destination", action: "Updated destination" };
-    if (method === "DELETE")
-      return { module: "destination", action: "Changed destination status" };
+    if (method === "DELETE") {
+      const nextStatus = req.headers?.status;
+      const activating =
+        String(nextStatus) === "1" || nextStatus === 1 || nextStatus === true;
+      return {
+        module: "destination",
+        action: activating ? "Activated destination" : "Deactivated destination",
+      };
+    }
   }
 
   if (url.includes("/addRole") || (url.includes("/role") && method === "POST"))
@@ -124,11 +131,69 @@ function buildSummary(req, described) {
   if (body.roleName) return `${described.action} · ${body.roleName}`;
   if (body.ownerName || body.companyName)
     return `${described.action} · ${body.companyName || body.ownerName}`;
-  if (body.location) return `${described.action} · ${body.location}`;
+  if (body.type || body.location)
+    return `${described.action} · ${[body.type, body.location]
+      .filter(Boolean)
+      .join(" · ")}`;
   if (body.containerNo) return `${described.action} · ${body.containerNo}`;
   return described.action;
 }
 
+function destinationIdFromRequest(req) {
+  const url = String(req.originalUrl || req.path || "").split("?")[0];
+  const match = url.match(/\/destination\/([a-fA-F0-9]{24})/);
+  return match?.[1] || null;
+}
+
+function destinationLabel(type, location) {
+  return [type, location].filter(Boolean).join(" · ");
+}
+
+function destinationChangeSummary(req, described) {
+  const body = req.body || {};
+  const previous = req._previousDestination || {};
+  const type = body.type || previous.type;
+  const location = body.location || previous.location;
+  const label = destinationLabel(type, location);
+
+  if (req.method === "POST") {
+    return {
+      action: "Created destination",
+      summary: label || described.action,
+    };
+  }
+
+  if (req.method === "PUT") {
+    const changes = [];
+    if (body.type && previous.type && body.type !== previous.type) {
+      changes.push(`Changed type from ${previous.type} to ${body.type}`);
+    }
+    if (
+      body.location &&
+      previous.location &&
+      body.location !== previous.location
+    ) {
+      changes.push(
+        `Changed location from ${previous.location} to ${body.location}`
+      );
+    }
+    return {
+      action: location
+        ? `Updated destination · ${location}`
+        : "Updated destination",
+      summary: changes.length ? changes.join(". ") : label || described.action,
+    };
+  }
+
+  if (req.method === "DELETE") {
+    return {
+      action: described.action,
+      summary: label || described.action,
+    };
+  }
+
+  return { action: described.action, summary: described.action };
+}
 function actorIdFromRequest(req) {
   if (req.tokenData?.userid) return req.tokenData.userid;
   const token = req.cookies?.token;
@@ -142,46 +207,81 @@ function actorIdFromRequest(req) {
 }
 
 exports.activityLog = (req, res, next) => {
-  res.on("finish", async () => {
-    try {
-      if (!shouldLog(req)) return;
-      const described = describeAction(req);
-      const actorId = actorIdFromRequest(req);
-      let actorName = req.body?.email || "Unknown";
-      let actorEmail = req.body?.email || "";
-      let actorRole = "";
+  const startLogging = () => {
+    res.on("finish", async () => {
+      try {
+        if (!shouldLog(req)) return;
+        const described = describeAction(req);
+        const actorId = actorIdFromRequest(req);
+        let actorName = req.body?.email || "Unknown";
+        let actorEmail = req.body?.email || "";
+        let actorRole = "";
 
-      if (actorId) {
-        const user = await User.findById(actorId).populate(
-          "roleId",
-          "roleName admin"
-        );
-        if (user) {
-          actorName = user.fullName;
-          actorEmail = user.email;
-          actorRole = user.roleId?.roleName || "";
+        if (actorId) {
+          const user = await User.findById(actorId).populate(
+            "roleId",
+            "roleName admin"
+          );
+          if (user) {
+            actorName = user.fullName;
+            actorEmail = user.email;
+            actorRole = user.roleId?.roleName || "";
+          }
         }
-      }
 
-      await ActivityLog.create({
-        action: described.action,
-        module: described.module,
-        method: req.method,
-        path: String(req.originalUrl || req.path || "").split("?")[0],
-        statusCode: res.statusCode,
-        success: res.statusCode < 400,
-        actorId: actorId || undefined,
-        actorName,
-        actorEmail,
-        actorRole,
-        summary: buildSummary(req, described),
-        payload: sanitize(req.body),
-        ip: req.ip || req.headers["x-forwarded-for"] || "",
-        userAgent: req.get("user-agent") || "",
-      });
-    } catch (error) {
-      console.error("Activity log failed:", error.message);
-    }
-  });
-  next();
+        const isDestination = described.module === "destination";
+        const destinationLog = isDestination
+          ? destinationChangeSummary(req, described)
+          : null;
+        const summary = destinationLog
+          ? destinationLog.summary
+          : buildSummary(req, described);
+
+        await ActivityLog.create({
+          action: destinationLog ? destinationLog.action : described.action,
+          module: described.module,
+          method: req.method,
+          path: String(req.originalUrl || req.path || "").split("?")[0],
+          statusCode: res.statusCode,
+          success: res.statusCode < 400,
+          actorId: actorId || undefined,
+          actorName,
+          actorEmail,
+          actorRole,
+          summary,
+          payload: sanitize(
+            isDestination
+              ? {
+                  ...req.body,
+                  previous: req._previousDestination || undefined,
+                }
+              : req.body
+          ),
+          ip: req.ip || req.headers["x-forwarded-for"] || "",
+          userAgent: req.get("user-agent") || "",
+        });
+      } catch (error) {
+        console.error("Activity log failed:", error.message);
+      }
+    });
+    next();
+  };
+
+  const destinationId = destinationIdFromRequest(req);
+  if (
+    destinationId &&
+    (req.method === "PUT" || req.method === "DELETE")
+  ) {
+    Destination.findById(destinationId)
+      .select("type location status")
+      .lean()
+      .then((dest) => {
+        req._previousDestination = dest || null;
+        startLogging();
+      })
+      .catch(() => startLogging());
+    return;
+  }
+
+  startLogging();
 };

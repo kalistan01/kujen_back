@@ -31,12 +31,22 @@ router
   .get("/:id", checkToken,assignLorryController.getAssignLorryByIds)
   .delete("/:id", checkToken,assignLorryController.deleteAssignLorry)
   .patch("/:id", checkToken,assignLorryController.updateBasicinfo);
+router.patch(
+  "/:id/pay-balances",
+  checkToken,
+  assignLorryController.payContainersBalance
+);
 router.post("/:id/containers", checkToken,assignLorryController.addContainer);
 router
   .delete("/:id/containers/:containerId", checkToken,assignLorryController.removeContainer)
   .patch(
     "/:id/containers/:containerId",checkToken,
     assignLorryController.updatedContainerStatus
+  )
+  .patch(
+    "/:id/containers/:containerId/balance",
+    checkToken,
+    assignLorryController.payContainerBalance
   )
   .put(
     "/:id/containers/:containerId",checkToken,

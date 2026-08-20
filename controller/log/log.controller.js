@@ -28,14 +28,28 @@ exports.getLogs = async (req, res) => {
       ];
     }
 
+    const page = Math.max(1, parseInt(String(req.query.page || 1), 10) || 1);
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(String(req.query.limit || 10), 10) || 10)
+    );
+    const skip = (page - 1) * limit;
+
+    const total = await ActivityLog.countDocuments(filter);
+    const pages = Math.max(1, Math.ceil(total / limit) || 1);
     const logs = await ActivityLog.find(filter)
       .sort({ createdAt: -1 })
-      .limit(300)
+      .skip(skip)
+      .limit(limit)
       .lean();
 
     return res.status(200).json({
       success: true,
       count: logs.length,
+      total,
+      page,
+      pages,
+      limit,
       data: logs,
     });
   } catch (error) {

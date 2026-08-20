@@ -5,7 +5,7 @@ const destinationSchema = new mongoose.Schema({
     type: {
         type: String,
         required: [true, 'Type is required.'],
-        enum: ['Port', 'Yard', 'Store', 'Other'],
+        enum: ['Port', 'Yard', 'Store', 'RCT', 'Other'],
     },
     location: {
         type: String,
