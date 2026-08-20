@@ -56,7 +56,7 @@ exports.adminlogIn = async (req, res) => {
 
     const admin = await User.findOne({ email }).select("+password").populate(
       "roleId",
-      "roleName admin"
+      "roleName admin permission denied"
     );
     if (!admin) {
       return res.status(404).json({

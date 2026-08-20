@@ -1,10 +1,11 @@
 const { LorryOwner, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
+const { redactAssignment, stripDeniedFromBody } = require("../../middleware/rbac");
 exports.createAssignLorry = async (req, res) => {
   try {
     const { userid } = req.tokenData;
     const assignmentData = {
-      ...req.body,
+      ...stripDeniedFromBody(req.body, req.authRole),
       createdBy: userid,
       updatedBy: userid,
       createdAt: new Date(),
@@ -70,7 +71,9 @@ exports.getAllAssignLorries = async (req, res) => {
     res.status(200).json({
       success: true,
       count: assignmentsWithStatus.length,
-      data: assignmentsWithStatus,
+      data: assignmentsWithStatus.map((item) =>
+        redactAssignment(item, req.authRole)
+      ),
     });
   } catch (error) {
     res.status(500).json({
@@ -447,7 +450,7 @@ exports.getAssignLorryByIds = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: assignmentWithStatus,
+      data: redactAssignment(assignmentWithStatus, req.authRole),
     });
   } catch (error) {
     res.status(500).json({
@@ -527,7 +530,7 @@ exports.updateBasicinfo = async (req, res) => {
 exports.addContainer = async (req, res) => {
   try {
     const { id } = req.params;
-    const newContainer = req.body;
+    const newContainer = stripDeniedFromBody(req.body, req.authRole);
     const { userid } = req.tokenData;
     newContainer.createdBy = userid;
     newContainer.updatedBy = userid;
@@ -612,28 +615,28 @@ exports.removeContainer = async (req, res) => {
 exports.updateContainerDetails = async (req, res) => {
   try {
     const { id, containerId } = req.params;
-    const {
-      containerNo,
-      vocNo,
-      lorryId,
-      loadingDate,
-      demoundDate,
-      destination,
-      weight,
-      dayHire,
-      advanced,
-      outHire,
-      other,
-      heldUp,
-      agentFee,
-      transportCommission,
-      status,
-    } = req.body;
-    const returns = req.body.return;
-    const advancedDate = req.body.advancedDate || new Date();
-    const balancePaid = req.body.balancePaid || 0;
-    const balanceDate =
-      req.body.balanceDate || (balancePaid ? new Date() : undefined);
+    const body = stripDeniedFromBody(req.body || {}, req.authRole);
+    const allowed = [
+      "containerNo",
+      "vocNo",
+      "lorryId",
+      "loadingDate",
+      "demoundDate",
+      "destination",
+      "weight",
+      "dayHire",
+      "advanced",
+      "advancedDate",
+      "balancePaid",
+      "balanceDate",
+      "outHire",
+      "other",
+      "heldUp",
+      "agentFee",
+      "transportCommission",
+      "status",
+      "return",
+    ];
     const { userid } = req.tokenData;
 
     if (
@@ -645,33 +648,25 @@ exports.updateContainerDetails = async (req, res) => {
         .json({ success: false, message: "Invalid ID format provided." });
     }
 
+    const $set = {
+      "containers.$.updatedBy": userid,
+      "containers.$.updatedAt": new Date(),
+    };
+    allowed.forEach((key) => {
+      if (body[key] !== undefined) {
+        $set[`containers.$.${key}`] = body[key];
+      }
+    });
+    if (body.balancePaid && body.balanceDate === undefined) {
+      $set["containers.$.balanceDate"] = new Date();
+    }
+    if (body.advanced !== undefined && body.advancedDate === undefined) {
+      $set["containers.$.advancedDate"] = new Date();
+    }
+
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      {
-        $set: {
-          "containers.$.containerNo": containerNo,
-          "containers.$.vocNo": vocNo,
-          "containers.$.lorryId": lorryId,
-          "containers.$.loadingDate": loadingDate,
-          "containers.$.demoundDate": demoundDate,
-          "containers.$.destination": destination,
-          "containers.$.weight": weight,
-          "containers.$.dayHire": dayHire,
-          "containers.$.outHire": outHire,
-          "containers.$.other": other,
-          "containers.$.advanced": advanced,
-          "containers.$.advancedDate": advancedDate,
-          "containers.$.balancePaid": balancePaid,
-          "containers.$.balanceDate": balanceDate,
-          "containers.$.heldUp": heldUp,
-          "containers.$.agentFee": agentFee,
-          "containers.$.transportCommission": transportCommission,
-          "containers.$.status": status,
-          "containers.$.return": returns,
-          "containers.$.updatedBy": userid,
-          "containers.$.updatedAt": new Date(),
-        },
-      },
+      { $set },
       {
         new: true,
       }

@@ -57,7 +57,7 @@ app.get("/api/v1/auth/check", async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_KEY);
     const user = await User.findById(decoded.userid).populate(
       "roleId",
-      "roleName admin"
+      "roleName admin permission denied"
     );
     if (!user) return res.status(401).json({ message: "Unauthorized" });
 

@@ -13,13 +13,16 @@ exports.isAdminRole = isAdminRole;
 exports.publicUser = (user) => {
   const role =
     user?.roleId && typeof user.roleId === "object" ? user.roleId : null;
+  const admin = isAdminRole(role);
   return {
     _id: user._id,
     fullName: user.fullName,
     email: user.email,
     roleId: role?._id || user.roleId,
     roleName: role?.roleName || "",
-    admin: isAdminRole(role),
+    admin,
+    permission: admin ? [] : role?.permission || [],
+    denied: admin ? [] : role?.denied || [],
   };
 };
 
@@ -31,7 +34,7 @@ exports.requireAdmin = async (req, res, next) => {
     }
     const user = await User.findById(userid).populate(
       "roleId",
-      "roleName admin"
+      "roleName admin permission denied"
     );
     if (!user) {
       return res.status(401).json({ success: false, message: "Unauthorized" });

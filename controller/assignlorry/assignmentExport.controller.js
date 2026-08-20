@@ -2,6 +2,7 @@ const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
+const { canSeeField } = require("../../middleware/rbac");
 
 const CHARGE_FIELDS = [
   ["weight", "Weight"],
@@ -66,8 +67,13 @@ const formatDateTime = (value) => {
 const nameOf = (value) =>
   value && typeof value === "object" ? value.fullName || "" : value || "";
 
-const containerTotal = (c = {}) =>
-  CHARGE_FIELDS.reduce((sum, [key]) => sum + toAmount(c[key]), 0);
+const visibleCharges = (role) =>
+  CHARGE_FIELDS.filter(([key]) => canSeeField(role, key));
+const visibleCommissions = (role) =>
+  COMMISSION_FIELDS.filter(([key]) => canSeeField(role, key));
+
+const containerTotal = (c = {}, role) =>
+  visibleCharges(role).reduce((sum, [key]) => sum + toAmount(c[key]), 0);
 
 const fileBase = (assignment) =>
   `RG-Brothers-BL-${assignment?.blNo || "assignment"}`.replace(
@@ -87,23 +93,26 @@ const ownerLabel = (c = {}) =>
 const destLabel = (c = {}) =>
   c.destinationlocation || c.destination?.location || "";
 
-const containerPaid = (c = {}) =>
-  toAmount(c.advanced) + toAmount(c.balancePaid);
+const containerPaid = (c = {}, role) =>
+  (canSeeField(role, "advanced") ? toAmount(c.advanced) : 0) +
+  (canSeeField(role, "balancePaid") ? toAmount(c.balancePaid) : 0);
 
-const assignmentFinancials = (containers = []) => {
+const assignmentFinancials = (containers = [], role) => {
+  const chargeFields = visibleCharges(role);
+  const commissionFields = visibleCommissions(role);
   const charges = Object.fromEntries(
-    CHARGE_FIELDS.map(([key]) => [
+    chargeFields.map(([key]) => [
       key,
       containers.reduce((sum, c) => sum + toAmount(c?.[key]), 0),
     ])
   );
   const commissions = Object.fromEntries(
-    COMMISSION_FIELDS.map(([key]) => [
+    commissionFields.map(([key]) => [
       key,
       containers.reduce((sum, c) => sum + toAmount(c?.[key]), 0),
     ])
   );
-  const total = CHARGE_FIELDS.reduce((sum, [key]) => sum + charges[key], 0);
+  const total = chargeFields.reduce((sum, [key]) => sum + charges[key], 0);
   const advanced = containers.reduce(
     (sum, c) => sum + toAmount(c?.advanced),
     0
@@ -173,7 +182,7 @@ function sendFile(res, buffer, filename, contentType) {
   return res.end(buffer);
 }
 
-async function buildExcel(assignment) {
+async function buildExcel(assignment, role) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "RG Brothers";
   const sheet = workbook.addWorksheet("Assignment");
@@ -195,21 +204,49 @@ async function buildExcel(assignment) {
     { header: "Destination", key: "destination", width: 16 },
     { header: "Loading Date", key: "loadingDate", width: 14 },
     { header: "Demount Date", key: "demoundDate", width: 14 },
-    { header: "Weight", key: "weight", width: 12 },
-    { header: "Day Hire", key: "dayHire", width: 12 },
-    { header: "Advanced", key: "advanced", width: 12 },
-    { header: "Advanced Date", key: "advancedDate", width: 14 },
-    { header: "Balance Paid", key: "balancePaid", width: 14 },
-    { header: "Balance Date", key: "balanceDate", width: 14 },
-    { header: "Out Hire", key: "outHire", width: 12 },
-    { header: "Other", key: "other", width: 12 },
-    { header: "Held Up", key: "heldUp", width: 12 },
-    { header: "Agent Fee", key: "agentFee", width: 12 },
-    { header: "Transport Commission", key: "transportCommission", width: 18 },
-    { header: "Return", key: "return", width: 12 },
-    { header: "Container Total", key: "total", width: 14 },
-    { header: "Paid", key: "paid", width: 12 },
-    { header: "Balance", key: "balance", width: 12 },
+    ...(canSeeField(role, "weight")
+      ? [{ header: "Weight", key: "weight", width: 12 }]
+      : []),
+    ...(canSeeField(role, "dayHire")
+      ? [{ header: "Day Hire", key: "dayHire", width: 12 }]
+      : []),
+    ...(canSeeField(role, "advanced")
+      ? [{ header: "Advanced", key: "advanced", width: 12 }]
+      : []),
+    ...(canSeeField(role, "advancedDate")
+      ? [{ header: "Advanced Date", key: "advancedDate", width: 14 }]
+      : []),
+    ...(canSeeField(role, "balancePaid")
+      ? [{ header: "Balance Paid", key: "balancePaid", width: 14 }]
+      : []),
+    ...(canSeeField(role, "balanceDate")
+      ? [{ header: "Balance Date", key: "balanceDate", width: 14 }]
+      : []),
+    ...(canSeeField(role, "outHire")
+      ? [{ header: "Out Hire", key: "outHire", width: 12 }]
+      : []),
+    ...(canSeeField(role, "other")
+      ? [{ header: "Other", key: "other", width: 12 }]
+      : []),
+    ...(canSeeField(role, "heldUp")
+      ? [{ header: "Held Up", key: "heldUp", width: 12 }]
+      : []),
+    ...(canSeeField(role, "agentFee")
+      ? [{ header: "Agent Fee", key: "agentFee", width: 12 }]
+      : []),
+    ...(canSeeField(role, "transportCommission")
+      ? [{ header: "Transport Commission", key: "transportCommission", width: 18 }]
+      : []),
+    ...(canSeeField(role, "return")
+      ? [{ header: "Return", key: "return", width: 12 }]
+      : []),
+    ...(canSeeField(role, "totals")
+      ? [
+          { header: "Container Total", key: "total", width: 14 },
+          { header: "Paid", key: "paid", width: 12 },
+          { header: "Balance", key: "balance", width: 12 },
+        ]
+      : []),
     { header: "Created by", key: "createdBy", width: 16 },
     { header: "Created at", key: "createdAt", width: 20 },
     { header: "Updated by", key: "updatedBy", width: 16 },
@@ -230,7 +267,11 @@ async function buildExcel(assignment) {
     "total",
     "paid",
     "balance",
-  ];
+  ].filter((key) =>
+    key === "total" || key === "paid" || key === "balance"
+      ? canSeeField(role, "totals")
+      : canSeeField(role, key)
+  );
 
   const containers = assignment.containers?.length
     ? assignment.containers
@@ -253,8 +294,8 @@ async function buildExcel(assignment) {
   };
 
   containers.forEach((c) => {
-    const total = containerTotal(c);
-    const paid = containerPaid(c);
+    const total = containerTotal(c, role);
+    const paid = containerPaid(c, role);
     const row = {
       blNo: assignment.blNo || "",
       status: (assignment.status || "pending").replace(/-/g, " "),
@@ -315,7 +356,7 @@ async function buildExcel(assignment) {
   return workbook.xlsx.writeBuffer();
 }
 
-function buildPdf(assignment) {
+function buildPdf(assignment, role) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 36 });
     const chunks = [];
@@ -327,7 +368,7 @@ function buildPdf(assignment) {
     const gold = "#C5CCD4";
     const pageW = doc.page.width;
     const containers = assignment.containers || [];
-    const fin = assignmentFinancials(containers);
+    const fin = assignmentFinancials(containers, role);
     const status = (assignment.status || "pending").replace(/-/g, " ");
 
     doc.rect(0, 0, pageW, 78).fill(navy);
@@ -398,8 +439,8 @@ function buildPdf(assignment) {
     }
 
     containers.forEach((c, index) => {
-      const tot = containerTotal(c);
-      const paid = containerPaid(c);
+      const tot = containerTotal(c, role);
+      const paid = containerPaid(c, role);
       if (y > 620) {
         doc.addPage();
         y = 40;
@@ -423,27 +464,33 @@ function buildPdf(assignment) {
       ]);
 
       const charges = [
-        ["Weight", c.weight],
-        ["Day Hire", c.dayHire],
-        [
-          c.advancedDate
-            ? `Advanced (${formatDate(c.advancedDate)})`
-            : "Advanced",
-          c.advanced,
-        ],
-        [
-          c.balanceDate
-            ? `Balance Paid (${formatDate(c.balanceDate)})`
-            : "Balance Paid",
-          c.balancePaid,
-        ],
-        ["Out Hire", c.outHire],
-        ["Other", c.other],
-        ["Held Up", c.heldUp],
-        ["Agent Fee", c.agentFee],
-        ["Transport Commission", c.transportCommission],
-        ["Return", c.return],
-      ];
+        canSeeField(role, "weight") ? ["Weight", c.weight] : null,
+        canSeeField(role, "dayHire") ? ["Day Hire", c.dayHire] : null,
+        canSeeField(role, "advanced")
+          ? [
+              c.advancedDate
+                ? `Advanced (${formatDate(c.advancedDate)})`
+                : "Advanced",
+              c.advanced,
+            ]
+          : null,
+        canSeeField(role, "balancePaid")
+          ? [
+              c.balanceDate
+                ? `Balance Paid (${formatDate(c.balanceDate)})`
+                : "Balance Paid",
+              c.balancePaid,
+            ]
+          : null,
+        canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
+        canSeeField(role, "other") ? ["Other", c.other] : null,
+        canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
+        canSeeField(role, "agentFee") ? ["Agent Fee", c.agentFee] : null,
+        canSeeField(role, "transportCommission")
+          ? ["Transport Commission", c.transportCommission]
+          : null,
+        canSeeField(role, "return") ? ["Return", c.return] : null,
+      ].filter(Boolean);
       const tableTop = y;
       charges.forEach((row, i) => {
         const col = i % 2;
@@ -459,11 +506,14 @@ function buildPdf(assignment) {
       y = tableTop + Math.ceil(charges.length / 2) * 16 + 8;
 
       const boxW = (pageW - 88) / 3;
-      [
-        ["Total", money(tot), false],
-        ["Paid", money(paid), false],
-        ["Balance", money(tot - paid), true],
-      ].forEach((box, i) => {
+      (canSeeField(role, "totals")
+        ? [
+            ["Total", money(tot), false],
+            ["Paid", money(paid), false],
+            ["Balance", money(tot - paid), true],
+          ]
+        : []
+      ).forEach((box, i) => {
         const x = 36 + i * (boxW + 8);
         if (box[2]) doc.roundedRect(x, y, boxW, 28, 3).fill(navy);
         else doc.roundedRect(x, y, boxW, 28, 3).strokeColor("#D0D5DD").lineWidth(0.6).stroke();
@@ -475,12 +525,24 @@ function buildPdf(assignment) {
 
     section("Financial summary");
     const summaryRows = [
-      ...CHARGE_FIELDS.map(([key, label]) => [label, money(fin.charges[key]), false]),
-      ["Total", money(fin.total), false],
-      ["Advanced", money(fin.advanced), false],
-      ["Balance Paid", money(fin.balancePaid), false],
-      ["Remaining", money(fin.remaining), true],
-      ...COMMISSION_FIELDS.map(([key, label]) => [
+      ...visibleCharges(role).map(([key, label]) => [
+        label,
+        money(fin.charges[key]),
+        false,
+      ]),
+      ...(canSeeField(role, "totals")
+        ? [
+            ["Total", money(fin.total), false],
+            ...(canSeeField(role, "advanced")
+              ? [["Advanced", money(fin.advanced), false]]
+              : []),
+            ...(canSeeField(role, "balancePaid")
+              ? [["Balance Paid", money(fin.balancePaid), false]]
+              : []),
+            ["Remaining", money(fin.remaining), true],
+          ]
+        : []),
+      ...visibleCommissions(role).map(([key, label]) => [
         label,
         money(fin.commissions[key]),
         false,
@@ -534,7 +596,7 @@ exports.exportAssignmentExcel = async (req, res) => {
     if (!assignment) {
       return res.status(404).json({ success: false, message: "Assignment not found." });
     }
-    const buffer = await buildExcel(assignment);
+    const buffer = await buildExcel(assignment, req.authRole);
     return sendFile(
       res,
       Buffer.from(buffer),
@@ -556,7 +618,7 @@ exports.exportAssignmentPdf = async (req, res) => {
     if (!assignment) {
       return res.status(404).json({ success: false, message: "Assignment not found." });
     }
-    const buffer = await buildPdf(assignment);
+    const buffer = await buildPdf(assignment, req.authRole);
     return sendFile(
       res,
       buffer,

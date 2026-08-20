@@ -6,8 +6,11 @@ module.exports = {
     const jsonToken = sign(
       {
         userid: userid,
-        role: role,
-     
+        role: {
+          _id: role?._id,
+          roleName: role?.roleName,
+          admin: Boolean(role?.admin),
+        },
       },
       process.env.JWT_KEY,
       { expiresIn: process.env.JWT_LIFETIME }

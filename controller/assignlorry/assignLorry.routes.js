@@ -3,53 +3,59 @@ const router = express.Router();
 const assignLorryController = require("./assignLorry.controller");
 const assignmentExport = require("./assignmentExport.controller");
 const { checkToken } = require("../../middleware/token");
+const { loadAuthRole, requireCan } = require("../../middleware/rbac");
+
+const withRole = [checkToken, loadAuthRole];
+const manageAssignment = [...withRole, requireCan(5)];
 
 router
-  .post("/", checkToken, assignLorryController.createAssignLorry)
-  .get("/", checkToken, assignLorryController.getAllAssignLorries);
+  .post("/", ...manageAssignment, assignLorryController.createAssignLorry)
+  .get("/", ...withRole, assignLorryController.getAllAssignLorries);
 router.get(
   "/export/pdf",
-  checkToken,
+  ...withRole,
   assignmentExport.exportAssignmentsPdf
 );
 router.get(
   "/export/excel",
-  checkToken,
+  ...withRole,
   assignmentExport.exportAssignmentsExcel
 );
 router.get(
   "/:id/export/pdf",
-  checkToken,
+  ...withRole,
   assignmentExport.exportAssignmentPdf
 );
 router.get(
   "/:id/export/excel",
-  checkToken,
+  ...withRole,
   assignmentExport.exportAssignmentExcel
 );
 router
-  .get("/:id", checkToken,assignLorryController.getAssignLorryByIds)
-  .delete("/:id", checkToken,assignLorryController.deleteAssignLorry)
-  .patch("/:id", checkToken,assignLorryController.updateBasicinfo);
+  .get("/:id", ...withRole, assignLorryController.getAssignLorryByIds)
+  .delete("/:id", ...manageAssignment, assignLorryController.deleteAssignLorry)
+  .patch("/:id", ...manageAssignment, assignLorryController.updateBasicinfo);
 router.patch(
   "/:id/pay-balances",
-  checkToken,
+  ...manageAssignment,
   assignLorryController.payContainersBalance
 );
-router.post("/:id/containers", checkToken,assignLorryController.addContainer);
+router.post("/:id/containers", ...manageAssignment, assignLorryController.addContainer);
 router
-  .delete("/:id/containers/:containerId", checkToken,assignLorryController.removeContainer)
+  .delete("/:id/containers/:containerId", ...manageAssignment, assignLorryController.removeContainer)
   .patch(
-    "/:id/containers/:containerId",checkToken,
+    "/:id/containers/:containerId",
+    ...manageAssignment,
     assignLorryController.updatedContainerStatus
   )
   .patch(
     "/:id/containers/:containerId/balance",
-    checkToken,
+    ...manageAssignment,
     assignLorryController.payContainerBalance
   )
   .put(
-    "/:id/containers/:containerId",checkToken,
+    "/:id/containers/:containerId",
+    ...manageAssignment,
     assignLorryController.updateContainerDetails
   );
 
