@@ -4,13 +4,16 @@ const mongoose = require("mongoose");
 const destinationSchema = new mongoose.Schema({
     type: {
         type: String,
-        required: [true, 'Type is required.'],
-        enum: ['Port', 'Yard', 'Store', 'RCT', 'Other'],
+        required: [true, "Destination type is required."],
+        enum: {
+            values: ["Port", "Yard", "Store", "RCT", "Other"],
+            message: "{VALUE} is not a valid destination type.",
+        },
     },
     location: {
         type: String,
-        required: [true, 'Location is required.'],
-        trim: true
+        required: [true, "Location is required."],
+        trim: true,
     },
     status: {
         type: Boolean,

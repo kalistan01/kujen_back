@@ -13,6 +13,7 @@ const activityLogSchema = new mongoose.Schema(
     actorEmail: { type: String, trim: true },
     actorRole: { type: String, trim: true },
     summary: { type: String, trim: true },
+    entityId: { type: mongoose.Schema.Types.ObjectId },
     payload: { type: mongoose.Schema.Types.Mixed },
     ip: { type: String, trim: true },
     userAgent: { type: String, trim: true },
@@ -23,6 +24,7 @@ const activityLogSchema = new mongoose.Schema(
 activityLogSchema.index({ createdAt: -1 });
 activityLogSchema.index({ module: 1, createdAt: -1 });
 activityLogSchema.index({ actorId: 1, createdAt: -1 });
+activityLogSchema.index({ entityId: 1, createdAt: -1 });
 
 const ActivityLog =
   mongoose.models.ActivityLog ||

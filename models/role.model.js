@@ -4,9 +4,13 @@ const mongoose = require("mongoose");
 
 const roleSchema = new mongoose.Schema(
   {
-    roleName: { type: String, required: true },
-    permission: { type: [Number] },
-    denied: { type: [Number], required: true },
+    roleName: {
+      type: String,
+      required: [true, "Role name is required."],
+      trim: true,
+    },
+    permission: { type: [Number], default: [] },
+    denied: { type: [Number], default: [] },
     status: { type: Boolean, default: true },
     admin: {
       type: Boolean,

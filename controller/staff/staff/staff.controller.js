@@ -1,9 +1,10 @@
 const { createToken } = require("../../../middleware/token");
 const { User, Role } = require("../../../models");
-const { publicUser } = require("../../../middleware/requireAdmin");
+const { publicUser, accessDeniedMessage } = require("../../../middleware/requireAdmin");
 const { authCookie } = require("../../../config/cookie");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
+const { emitChange, onlineUserIds } = require("../../../lib/socket");
 
 exports.adminsignUp = async (req, res) => {
   try {
@@ -56,20 +57,27 @@ exports.adminlogIn = async (req, res) => {
 
     const admin = await User.findOne({ email }).select("+password").populate(
       "roleId",
-      "roleName admin permission denied"
+      "roleName admin permission denied status"
     );
     if (!admin) {
       return res.status(404).json({
-        message: "Invalid admin",
+        message: "No account found for this email.",
         success: false,
-        error: "Admin not found",
       });
     }
 
     const passwordMatch = await bcrypt.compare(password, admin.password);
     if (!passwordMatch) {
       return res.status(401).json({
-        message: "Invalid credentials",
+        message: "Incorrect email or password.",
+        success: false,
+      });
+    }
+
+    const blocked = accessDeniedMessage(admin);
+    if (blocked) {
+      return res.status(403).json({
+        message: blocked,
         success: false,
       });
     }
@@ -78,6 +86,7 @@ exports.adminlogIn = async (req, res) => {
 
     // Set token in HTTP-only cookie
     res.cookie("token", jsonToken, authCookie);
+    await User.updateOne({ _id: admin._id }, { lastSeen: new Date() });
 
     admin.password = undefined;
 
@@ -137,33 +146,107 @@ exports.adminReset = async (req, res) => {
   }
 };
 
+function formatSaveError(error) {
+  if (error?.code === 11000) {
+    const value = error.keyValue?.email;
+    return value
+      ? `A user with email "${value}" already exists.`
+      : "A user with this email already exists.";
+  }
+
+  if (error?.name === "ValidationError") {
+    const messages = Object.values(error.errors || {})
+      .map((item) => item.message)
+      .filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
+
+  return error?.message || "Something went wrong. Please try again.";
+}
+
+function sendError(res, status, message) {
+  return res.status(status).json({ success: false, message });
+}
+
+async function userForSync(userId, io) {
+  const user = await User.findById(userId)
+    .select("-password")
+    .populate("roleId", "roleName");
+  if (!user) return null;
+  const obj = user.toObject();
+  return {
+    ...obj,
+    id: String(obj._id),
+    roleName: obj.roleId?.roleName || "",
+    roleId: obj.roleId?._id || obj.roleId,
+    online: onlineUserIds(io).has(String(obj._id)),
+  };
+}
+
+function syncUser(req, action, id, data) {
+  emitChange(req, {
+    module: "user",
+    action,
+    id,
+    data: data ?? null,
+  });
+}
+
 exports.createUser = async (req, res) => {
   const { fullName, email, password, roleId } = req.body;
   try {
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res
-        .status(400)
-        .json({ success: false, message: "User already exists" });
+    const name = String(fullName || "").trim();
+    const mail = String(email || "").trim().toLowerCase();
+
+    if (!name) {
+      return sendError(res, 400, "Full name is required.");
     }
+    if (!mail) {
+      return sendError(res, 400, "Email is required.");
+    }
+    if (!/\S+@\S+\.\S+/.test(mail)) {
+      return sendError(res, 400, "Enter a valid email address.");
+    }
+    if (!password) {
+      return sendError(res, 400, "Password is required.");
+    }
+    if (String(password).length < 6) {
+      return sendError(res, 400, "Password must be at least 6 characters.");
+    }
+    if (!roleId || !mongoose.Types.ObjectId.isValid(roleId)) {
+      return sendError(res, 400, "Please select a valid role.");
+    }
+
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return sendError(res, 400, "Selected role was not found.");
+    }
+
+    const userExists = await User.findOne({ email: mail });
+    if (userExists) {
+      return sendError(res, 400, `A user with email "${mail}" already exists.`);
+    }
+
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     const user = await User.create({
-      fullName,
-      email,
+      fullName: name,
+      email: mail,
       password: hashedPassword,
       roleId,
     });
 
-    // Don't send the password back
-    const userResponse = await User.findById(user._id).select("-password");
-
+    const userResponse = await userForSync(user._id, req.app.get("io"));
+    syncUser(req, "created", user._id, userResponse);
     res.status(201).json({ success: true, data: userResponse });
   } catch (error) {
-    if (error.name === "ValidationError") {
-      return res.status(400).json({ success: false, message: error.message });
+    if (error.name === "ValidationError" || error.code === 11000) {
+      return sendError(res, 400, formatSaveError(error));
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not create the user. Please try again.",
+    });
   }
 };
 
@@ -173,6 +256,7 @@ exports.createUser = async (req, res) => {
  */
 exports.getAllUsers = async (req, res) => {
   try {
+    const onlineIds = onlineUserIds(req.app.get("io"));
     const users = await User.aggregate([
       {
         $lookup: {
@@ -205,9 +289,17 @@ exports.getAllUsers = async (req, res) => {
       },
     ]);
 
-    res.status(200).json({ success: true, count: users.length, data: users });
+    const data = users.map((user) => ({
+      ...user,
+      online: onlineIds.has(String(user._id)),
+    }));
+
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not load users. Please try again.",
+    });
   }
 };
 
@@ -219,19 +311,18 @@ exports.getUserById = async (req, res) => {
   try {
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid User ID" });
+      return sendError(res, 400, "Invalid user ID.");
     }
     const user = await User.findById(userId).select("-password");
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return sendError(res, 404, "User not found.");
     }
     res.status(200).json({ success: true, data: user });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not load this user. Please try again.",
+    });
   }
 };
 
@@ -243,17 +334,27 @@ exports.updateUser = async (req, res) => {
   try {
     const { userId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid User ID" });
+      return sendError(res, 400, "Invalid user ID.");
     }
 
-    // Prevent password from being updated through this route
     const { fullName, status, roleId } = req.body;
+    const name = String(fullName || "").trim();
+
+    if (!name) {
+      return sendError(res, 400, "Full name is required.");
+    }
+    if (!roleId || !mongoose.Types.ObjectId.isValid(roleId)) {
+      return sendError(res, 400, "Please select a valid role.");
+    }
+
+    const role = await Role.findById(roleId);
+    if (!role) {
+      return sendError(res, 400, "Selected role was not found.");
+    }
 
     const user = await User.findByIdAndUpdate(
       userId,
-      { fullName, status, roleId },
+      { fullName: name, status, roleId },
       {
         new: true,
         runValidators: true,
@@ -261,16 +362,19 @@ exports.updateUser = async (req, res) => {
     ).select("-password");
 
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return sendError(res, 404, "User not found.");
     }
-    res.status(200).json({ success: true, data: user });
+    const synced = await userForSync(user._id, req.app.get("io"));
+    syncUser(req, "updated", user._id, synced);
+    res.status(200).json({ success: true, data: synced || user });
   } catch (error) {
-    if (error.name === "ValidationError") {
-      return res.status(400).json({ success: false, message: error.message });
+    if (error.name === "ValidationError" || error.code === 11000) {
+      return sendError(res, 400, formatSaveError(error));
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not update the user. Please try again.",
+    });
   }
 };
 
@@ -284,9 +388,7 @@ exports.deleteUser = async (req, res) => {
     const { status } = req.headers;
 
     if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid User ID" });
+      return sendError(res, 400, "Invalid user ID.");
     }
     const user = await User.findByIdAndUpdate(
       userId,
@@ -294,14 +396,18 @@ exports.deleteUser = async (req, res) => {
       { new: true }
     );
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return sendError(res, 404, "User not found.");
     }
-    res
-      .status(200)
-      .json({ success: true, message: "User deleted successfully" });
+    const synced = await userForSync(user._id, req.app.get("io"));
+    syncUser(req, "updated", user._id, synced);
+    res.status(200).json({
+      success: true,
+      message: "User status updated successfully.",
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not update the user status. Please try again.",
+    });
   }
 };

@@ -3,6 +3,10 @@ const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
 const { canSeeField } = require("../../middleware/rbac");
+const {
+  applyHeldUpToContainers,
+  loadHeldUpRates,
+} = require("../../lib/heldUpCalc");
 
 const CHARGE_FIELDS = [
   ["weight", "Weight"],
@@ -147,9 +151,11 @@ async function loadAssignment(id) {
     .lean();
   if (!assignment) return null;
 
-  const containers = (assignment.containers || [])
-    .filter((c) => c && (c.containerNo || c._id))
-    .map((c) => ({
+  const rates = await loadHeldUpRates();
+  const containers = applyHeldUpToContainers(
+    (assignment.containers || []).filter((c) => c && (c.containerNo || c._id)),
+    rates
+  ).map((c) => ({
     ...c,
     lorryNum: c.lorryNum || c.lorryId?.lorryNum,
     capacity: c.capacity || c.lorryId?.capacity,
@@ -901,6 +907,345 @@ exports.exportAssignmentsPdf = async (req, res) => {
       res,
       buffer,
       "RG-Brothers-Assignments.pdf",
+      "application/pdf"
+    );
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to export PDF.",
+      error: error.message,
+    });
+  }
+};
+
+const moneyCompact = (value) => {
+  const amount = Math.round((toAmount(value) + Number.EPSILON) * 100) / 100;
+  const hasCents = Math.round(amount * 100) % 100 !== 0;
+  return `Rs ${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
+const formatDateDmy = (value) => {
+  if (!value) return "—";
+  if (typeof value === "string") {
+    const part = value.substring(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(part)) {
+      const [year, month, day] = part.split("-");
+      return `${day}/${month}/${year}`;
+    }
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+};
+
+async function loadSelectedContainerRows(containerIds) {
+  const wanted = (Array.isArray(containerIds) ? containerIds : [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  const objectIds = wanted
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+  if (!objectIds.length) return [];
+
+  const assignments = await AssignLorry.find({
+    "containers._id": { $in: objectIds },
+  })
+    .populate({ path: "containers.destination", select: "location type" })
+    .populate({
+      path: "containers.lorryId",
+      select: "lorryNum capacity owner",
+      populate: { path: "owner", select: "ownerName" },
+    })
+    .lean();
+
+  const rates = await loadHeldUpRates();
+  const byId = new Map();
+  assignments.forEach((assignment) => {
+    applyHeldUpToContainers(assignment.containers || [], rates).forEach((container) => {
+      const id = String(container._id);
+      if (!wanted.includes(id)) return;
+      byId.set(id, {
+        assignment: {
+          _id: assignment._id,
+          blNo: assignment.blNo,
+          cusdecDate: assignment.cusdecDate,
+          cusdecNo: assignment.cusdecNo,
+          regNo: assignment.regNo,
+          item: assignment.item,
+          exporter: assignment.exporter,
+          importer: assignment.importer,
+          status: assignmentStatus(assignment),
+        },
+        container: {
+          ...container,
+          lorryNum: container.lorryNum || container.lorryId?.lorryNum,
+          capacity: container.capacity || container.lorryId?.capacity,
+          lorryOwner: container.lorryOwner || container.lorryId?.owner?.ownerName,
+          destinationlocation:
+            container.destinationlocation || container.destination?.location,
+        },
+      });
+    });
+  });
+
+  return wanted.map((id) => byId.get(id)).filter(Boolean);
+}
+
+function groupSelectedRows(rows) {
+  const groups = [];
+  const indexById = new Map();
+  rows.forEach((row) => {
+    const key = String(row.assignment?._id || row.assignment?.blNo || groups.length);
+    const existing = indexById.get(key);
+    if (existing === undefined) {
+      indexById.set(key, groups.length);
+      groups.push({ assignment: row.assignment, containers: [row.container] });
+      return;
+    }
+    groups[existing].containers.push(row.container);
+  });
+  return groups;
+}
+
+function buildSelectedContainersPdf(rows, role) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 36, layout: "portrait" });
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    const navy = "#1B5A9D";
+    const gold = "#C5CCD4";
+    const pageW = doc.page.width;
+    const groups = groupSelectedRows(rows);
+
+    const drawHero = () => {
+      doc.rect(0, 0, pageW, 78).fill(navy);
+      doc.roundedRect(36, 24, 36, 36, 6).fill("#111111");
+      doc.fillColor(navy).font("Helvetica-Bold").fontSize(11).text("RG", 36, 36, {
+        width: 36,
+        align: "center",
+      });
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers", 82, 28);
+      doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 82, 50);
+      doc.fillColor("#FFFFFF").fontSize(8).text("SELECTED CONTAINERS", 0, 26, {
+        align: "right",
+        width: pageW - 36,
+      });
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(13)
+        .text(
+          `${rows.length} container${rows.length === 1 ? "" : "s"}`,
+          0,
+          40,
+          { align: "right", width: pageW - 36 }
+        );
+      doc
+        .font("Helvetica")
+        .fillColor(gold)
+        .fontSize(10)
+        .text(`${groups.length} BL${groups.length === 1 ? "" : "s"}`, 0, 56, {
+          align: "right",
+          width: pageW - 36,
+        });
+    };
+
+    let y = 96;
+    const ensure = (need = 120) => {
+      if (y + need < 780) return;
+      doc.addPage();
+      y = 40;
+    };
+
+    const section = (title) => {
+      ensure(40);
+      doc.fillColor(navy).font("Helvetica-Bold").fontSize(10).text(title.toUpperCase(), 36, y);
+      doc
+        .moveTo(36, y + 14)
+        .lineTo(pageW - 36, y + 14)
+        .strokeColor(gold)
+        .lineWidth(1.5)
+        .stroke();
+      y += 22;
+    };
+
+    const kv = (items) => {
+      const colW = (pageW - 72) / 3;
+      items.forEach((item, i) => {
+        const col = i % 3;
+        const row = Math.floor(i / 3);
+        const x = 36 + col * colW;
+        const yy = y + row * 28;
+        doc.fillColor("#667085").font("Helvetica").fontSize(8).text(item[0], x, yy);
+        doc
+          .fillColor(navy)
+          .font("Helvetica-Bold")
+          .fontSize(10)
+          .text(String(item[1] ?? "—") || "—", x, yy + 11, { width: colW - 8 });
+      });
+      y += Math.ceil(items.length / 3) * 28 + 8;
+    };
+
+    drawHero();
+
+    groups.forEach((group) => {
+      const assignment = group.assignment || {};
+      section(`Assignment details · ${assignment.blNo || "—"}`);
+      kv([
+        ["BL Number", assignment.blNo],
+        ["Cusdec Date", formatDateDmy(assignment.cusdecDate)],
+        ["Cusdec Number", assignment.cusdecNo],
+        ["Registration No.", assignment.regNo],
+        ["Item", assignment.item],
+        ["Exporter", assignment.exporter],
+        ["Importer", assignment.importer],
+      ]);
+
+      section(`Containers (${group.containers.length})`);
+      group.containers.forEach((c, index) => {
+        const tot = containerTotal(c, role);
+        const paid = containerPaid(c, role);
+        ensure(160);
+        doc.roundedRect(36, y, pageW - 72, 18, 3).fill("#F3F4F6");
+        doc
+          .fillColor(navy)
+          .font("Helvetica-Bold")
+          .fontSize(10)
+          .text(`${index + 1}. ${c.containerNo || "—"}`, 42, y + 5);
+        doc.font("Helvetica").fontSize(9).text(
+          (c.status || "pending").replace(/-/g, " "),
+          36,
+          y + 5,
+          { width: pageW - 84, align: "right" }
+        );
+        y += 26;
+        kv([
+          ["VOC No.", c.vocNo],
+          ["Lorry", lorryLabel(c)],
+          ["Owner", ownerLabel(c)],
+          ["Destination", destLabel(c)],
+          ["Loading", formatDateDmy(c.loadingDate)],
+          ["Demount", formatDateDmy(c.demoundDate)],
+        ]);
+
+        const charges = [
+          canSeeField(role, "weight") ? ["Weight", c.weight] : null,
+          canSeeField(role, "dayHire") ? ["Day Hire", c.dayHire] : null,
+          canSeeField(role, "advanced")
+            ? [
+                c.advancedDate
+                  ? `Advanced (${formatDateDmy(c.advancedDate)})`
+                  : "Advanced",
+                c.advanced,
+              ]
+            : null,
+          canSeeField(role, "balancePaid")
+            ? [
+                c.balanceDate
+                  ? `Balance Paid (${formatDateDmy(c.balanceDate)})`
+                  : "Balance Paid",
+                c.balancePaid,
+              ]
+            : null,
+          canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
+          canSeeField(role, "other") ? ["Other", c.other] : null,
+          canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
+          canSeeField(role, "agentFee") ? ["Agent Fee", c.agentFee] : null,
+          canSeeField(role, "transportCommission")
+            ? ["Transport Commission", c.transportCommission]
+            : null,
+          canSeeField(role, "return") ? ["Return", c.return] : null,
+        ].filter(Boolean);
+
+        ensure(Math.ceil(charges.length / 2) * 16 + 50);
+        const tableTop = y;
+        charges.forEach((row, i) => {
+          const col = i % 2;
+          const rowI = Math.floor(i / 2);
+          const x = 36 + col * ((pageW - 72) / 2);
+          const yy = tableTop + rowI * 16;
+          doc.fillColor("#667085").font("Helvetica").fontSize(9).text(row[0], x, yy);
+          doc
+            .fillColor(navy)
+            .font("Helvetica-Bold")
+            .text(moneyCompact(row[1]), x, yy, {
+              width: (pageW - 88) / 2,
+              align: "right",
+            });
+        });
+        y = tableTop + Math.ceil((charges.length || 1) / 2) * 16 + 8;
+
+        if (canSeeField(role, "totals")) {
+          const boxW = (pageW - 88) / 3;
+          [
+            ["Total", moneyCompact(tot), false],
+            ["Paid", moneyCompact(paid), false],
+            ["Balance", moneyCompact(tot - paid), true],
+          ].forEach((box, i) => {
+            const x = 36 + i * (boxW + 8);
+            if (box[2]) doc.roundedRect(x, y, boxW, 28, 3).fill(navy);
+            else
+              doc
+                .roundedRect(x, y, boxW, 28, 3)
+                .strokeColor("#D0D5DD")
+                .lineWidth(0.6)
+                .stroke();
+            doc
+              .fillColor(box[2] ? "#FFFFFF" : "#667085")
+              .font("Helvetica")
+              .fontSize(8)
+              .text(box[0], x + 8, y + 5);
+            doc
+              .fillColor(box[2] ? "#FFFFFF" : navy)
+              .font("Helvetica-Bold")
+              .fontSize(11)
+              .text(box[1], x + 8, y + 14);
+          });
+          y += 42;
+        }
+      });
+    });
+
+    ensure(30);
+    doc
+      .fillColor("#667085")
+      .fontSize(8)
+      .text(
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+        36,
+        y,
+        { width: pageW - 72, align: "center" }
+      );
+
+    doc.end();
+  });
+}
+
+exports.exportSelectedContainersPdf = async (req, res) => {
+  try {
+    const containerIds = Array.isArray(req.body?.containerIds)
+      ? req.body.containerIds
+      : String(req.query.ids || "")
+          .split(",")
+          .filter(Boolean);
+    if (!containerIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Select at least one container.",
+      });
+    }
+    const rows = await loadSelectedContainerRows(containerIds);
+    const buffer = await buildSelectedContainersPdf(rows, req.authRole);
+    return sendFile(
+      res,
+      buffer,
+      "RG-Brothers-Containers.pdf",
       "application/pdf"
     );
   } catch (error) {

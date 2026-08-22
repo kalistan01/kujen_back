@@ -21,6 +21,12 @@ router.get(
   ...withRole,
   assignmentExport.exportAssignmentsExcel
 );
+router.post(
+  "/export/containers/pdf",
+  ...withRole,
+  assignmentExport.exportSelectedContainersPdf
+);
+router.get("/next-voc", ...withRole, assignLorryController.getNextVocNo);
 router.get(
   "/:id/export/pdf",
   ...withRole,

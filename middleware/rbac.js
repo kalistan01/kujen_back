@@ -1,5 +1,5 @@
 const { User } = require("../models");
-const { isAdminRole } = require("./requireAdmin");
+const { isAdminRole, accessDeniedMessage } = require("./requireAdmin");
 
 const FIELD_BY_ID = {
   20: "weight",
@@ -101,10 +101,14 @@ async function loadAuthRole(req, res, next) {
     }
     const user = await User.findById(userid).populate(
       "roleId",
-      "roleName admin permission denied"
+      "roleName admin permission denied status"
     );
     if (!user) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    const blocked = accessDeniedMessage(user);
+    if (blocked) {
+      return res.status(403).json({ success: false, message: blocked });
     }
     req.authUser = user;
     req.authRole = user.roleId;

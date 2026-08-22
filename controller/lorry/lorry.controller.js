@@ -1,5 +1,6 @@
 const { LorryOwner, Lorry, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
+const { emitChange } = require("../../lib/socket");
 
 async function findLorriesUsedInAssignments(lorryIds) {
   const ids = (lorryIds || []).filter((id) =>
@@ -12,6 +13,46 @@ async function findLorriesUsedInAssignments(lorryIds) {
   });
   const usedSet = new Set(usedIds.map((id) => id.toString()));
   return ids.filter((id) => usedSet.has(id.toString()));
+}
+
+function formatSaveError(error) {
+  if (error?.code === 11000) {
+    const field = Object.keys(error.keyValue || {})[0];
+    const value = error.keyValue?.[field];
+    if (field === "lorryNum") {
+      return `Lorry number "${value}" is already registered.`;
+    }
+    return value
+      ? `"${value}" is already in use.`
+      : "This value is already registered.";
+  }
+
+  if (error?.name === "ValidationError") {
+    const messages = Object.values(error.errors || {})
+      .map((item) => item.message)
+      .filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
+
+  return error?.message || "Something went wrong. Please try again.";
+}
+
+async function ownerForSync(ownerId) {
+  const owner = await LorryOwner.findById(ownerId).lean();
+  if (!owner) return null;
+  const lorries = await markLorriesInUse(
+    await Lorry.find({ owner: ownerId }).lean()
+  );
+  return { ...owner, lorries };
+}
+
+function syncLorryOwner(req, action, id, data) {
+  emitChange(req, {
+    module: "lorry",
+    action,
+    id,
+    data: data ?? null,
+  });
 }
 
 async function markLorriesInUse(lorries) {
@@ -53,6 +94,10 @@ exports.createLorryOwner = async (req, res) => {
       ? await Lorry.insertMany(lorryDocs)
       : [];
 
+    syncLorryOwner(req, "created", owner._id, {
+      ...owner.toObject(),
+      lorries: createdLorries,
+    });
     res.status(201).json({
       success: true,
       owner,
@@ -60,9 +105,12 @@ exports.createLorryOwner = async (req, res) => {
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
-      return res.status(400).json({ success: false, message: error.message });
+      return res.status(400).json({ success: false, message: formatSaveError(error) });
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not create the lorry owner. Please try again.",
+    });
   }
 };
 
@@ -198,15 +246,20 @@ exports.updateLorryOwner = async (req, res) => {
     const updatedLorries = await markLorriesInUse(
       await Lorry.find({ owner: ownerId }).lean()
     );
+    const data = { ...lorryOwner.toObject(), lorries: updatedLorries };
+    syncLorryOwner(req, "updated", ownerId, data);
     res.status(200).json({
       success: true,
-      data: { ...lorryOwner.toObject(), lorries: updatedLorries },
+      data,
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
-      return res.status(400).json({ success: false, message: error.message });
+      return res.status(400).json({ success: false, message: formatSaveError(error) });
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not update the lorry owner. Please try again.",
+    });
   }
 };
 
@@ -243,6 +296,7 @@ exports.deleteLorryOwner = async (req, res) => {
         .json({ success: false, message: "Lorry owner not found" });
     }
     await Lorry.deleteMany({ owner: ownerId });
+    syncLorryOwner(req, "deleted", ownerId, null);
     res
       .status(200)
       .json({ success: true, message: "Owner deleted successfully" });
@@ -272,12 +326,18 @@ exports.addLorry = async (req, res) => {
     lorryOwner.lorries.push(req.body);
     await lorryOwner.save(); // Save the parent document to trigger validation and middleware
 
+    ownerForSync(ownerId)
+      .then((data) => syncLorryOwner(req, "updated", ownerId, data))
+      .catch(() => {});
     res.status(201).json({ success: true, data: lorryOwner });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
-      return res.status(400).json({ success: false, message: error.message });
+      return res.status(400).json({ success: false, message: formatSaveError(error) });
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not add the lorry. Please try again.",
+    });
   }
 };
 
@@ -312,12 +372,18 @@ exports.updateLorry = async (req, res) => {
     lorry.set(req.body);
     await lorryOwner.save();
 
+    ownerForSync(ownerId)
+      .then((data) => syncLorryOwner(req, "updated", ownerId, data))
+      .catch(() => {});
     res.status(200).json({ success: true, data: lorryOwner });
   } catch (error) {
-    if (error.name === "ValidationError") {
-      return res.status(400).json({ success: false, message: error.message });
+    if (error.name === "ValidationError" || error.code === 11000) {
+      return res.status(400).json({ success: false, message: formatSaveError(error) });
     }
-    res.status(500).json({ success: false, message: "Server Error" });
+    res.status(500).json({
+      success: false,
+      message: "Could not update the lorry. Please try again.",
+    });
   }
 };
 
@@ -352,6 +418,9 @@ exports.removeLorry = async (req, res) => {
     }
 
     const remaining = await Lorry.find({ owner: ownerId }).lean();
+    ownerForSync(ownerId)
+      .then((data) => syncLorryOwner(req, "updated", ownerId, data))
+      .catch(() => {});
     res.status(200).json({
       success: true,
       message: "Lorry removed",

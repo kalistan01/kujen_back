@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema({
         unique: true,
         lowercase: true,
         trim: true,
-        match: [/\S+@\S+\.\S+/, 'is invalid']
+        match: [/\S+@\S+\.\S+/, "Enter a valid email address."],
     },
     status: {
         type: Boolean,
@@ -22,13 +22,17 @@ const userSchema = new mongoose.Schema({
     password: {
         type: String,
         required: [true, 'Password is required.'],
-        minlength: 6,
+        minlength: [6, 'Password must be at least 6 characters.'],
         select: false 
     },
     roleId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Role", 
-        required: true
+        required: [true, "Role is required."],
+    },
+    lastSeen: {
+        type: Date,
+        default: null,
     },
 }, { timestamps: true });
 

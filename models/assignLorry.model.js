@@ -4,22 +4,22 @@ const assignLorrySchema = new mongoose.Schema(
   {
     blNo: {
       type: String,
-      required: [true, "BL No. is required."],
+          required: [true, "BL number is required."],
       trim: true,
     },
     cusdecDate: {
       type: String,
-      required: [true, "Cusdec Date is required."],
+      required: [true, "Cusdec date is required."],
       trim: true,
     },
     cusdecNo: {
       type: String,
-      required: [true, "Cusdec No. is required."],
+      required: [true, "Cusdec number is required."],
       trim: true,
     },
     regNo: {
       type: String,
-      required: [true, "Reg No. is required."],
+      required: [true, "Registration number is required."],
       trim: true,
     },
     item: {
@@ -49,13 +49,13 @@ const assignLorrySchema = new mongoose.Schema(
         },
         vocNo: {
           type: String,
-          required: [true, "Container No. is required."],
+          required: [true, "VOC number is required."],
           trim: true,
         },
         lorryId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Lorry",
-          required: [true, "Lorry ID is required."],
+          required: [true, "Please select a lorry."],
         },
         loadingDate: {
           type: Date,
@@ -63,7 +63,7 @@ const assignLorrySchema = new mongoose.Schema(
         },
         demoundDate: {
           type: Date,
-          required: [true, "demoundDate date is required."],
+          required: [true, "Demount date is required."],
         },
         destination: {
           type: mongoose.Schema.Types.ObjectId,
@@ -71,7 +71,7 @@ const assignLorrySchema = new mongoose.Schema(
         },
         weight: {
           type: Number,
-          required: [true, "Weight payment amount is required"],
+          required: [true, "Weight is required."],
         },
         dayHire: {
           type: Number,

@@ -1,12 +1,14 @@
 require("dotenv").config();
 const connectDatabase = require("./config/mongodb");
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const { User } = require("./models");
-const { publicUser } = require("./middleware/requireAdmin");
+const { publicUser, accessDeniedMessage } = require("./middleware/requireAdmin");
 const { activityLog } = require("./middleware/activityLog");
 const { authCookie } = require("./config/cookie");
+const { attachSocket } = require("./lib/socket");
 
 const bodyParser = require('body-parser');
 const cookieParser = require("cookie-parser");
@@ -57,9 +59,19 @@ app.get("/api/v1/auth/check", async (req, res) => {
     const decoded = jwt.verify(token, process.env.JWT_KEY);
     const user = await User.findById(decoded.userid).populate(
       "roleId",
-      "roleName admin permission denied"
+      "roleName admin permission denied status"
     );
     if (!user) return res.status(401).json({ message: "Unauthorized" });
+    const blocked = accessDeniedMessage(user);
+    if (blocked) {
+      res.clearCookie("token", {
+        httpOnly: authCookie.httpOnly,
+        secure: authCookie.secure,
+        sameSite: authCookie.sameSite,
+        path: authCookie.path,
+      });
+      return res.status(403).json({ message: blocked });
+    }
 
     res.status(200).json({
       message: "Authenticated",
@@ -102,4 +114,8 @@ app.use((err, req, res, next) => {
 connectDatabase();
 const PORT = process.env.PORT || 5001;
 const HOST = process.env.NODE_ENV === "production" ? "127.0.0.1" : "0.0.0.0";
-app.listen(PORT, HOST, () => console.log(`Server start on ${HOST}:${PORT}`));
+const httpServer = http.createServer(app);
+app.set("io", attachSocket(httpServer, corsOptions));
+httpServer.listen(PORT, HOST, () =>
+  console.log(`Server start on ${HOST}:${PORT}`)
+);

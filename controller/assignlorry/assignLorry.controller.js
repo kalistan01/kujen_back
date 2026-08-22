@@ -1,6 +1,164 @@
 const { LorryOwner, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
 const { redactAssignment, stripDeniedFromBody } = require("../../middleware/rbac");
+const {
+  applyHeldUpToContainer,
+  applyHeldUpToContainers,
+  loadHeldUpRates,
+} = require("../../lib/heldUpCalc");
+const { emitAssignmentChange } = require("../../lib/socket");
+
+function formatSaveError(error) {
+  if (error?.name === "ValidationError") {
+    const messages = Object.values(error.errors || {})
+      .map((item) => item.message)
+      .filter(Boolean);
+    if (messages.length) return [...new Set(messages)].join(" ");
+  }
+
+  if (error?.name === "CastError") {
+    if (String(error.path || "").includes("lorryId")) {
+      return "Please select a valid lorry.";
+    }
+    if (String(error.path || "").includes("destination")) {
+      return "Please select a valid destination.";
+    }
+    return "One of the selected values is invalid.";
+  }
+
+  return error?.message || "Something went wrong. Please try again.";
+}
+
+function vocSequenceFrom(value) {
+  const match = String(value || "").trim().match(/^RGB-(\d+)$/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function formatVocNo(n) {
+  return `RGB-${n}`;
+}
+
+async function getMaxVocNumber() {
+  const rows = await AssignLorry.aggregate([
+    { $unwind: { path: "$containers", preserveNullAndEmptyArrays: false } },
+    { $project: { vocNo: "$containers.vocNo" } },
+  ]);
+  return rows.reduce(
+    (max, row) => Math.max(max, vocSequenceFrom(row.vocNo)),
+    0
+  );
+}
+
+async function nextVocNumbers(count) {
+  const size = Math.max(1, Number(count) || 1);
+  const max = await getMaxVocNumber();
+  return Array.from({ length: size }, (_, index) =>
+    formatVocNo(max + index + 1)
+  );
+}
+
+async function loadAssignmentForSync(id) {
+  const assignment = await AssignLorry.findById(id)
+    .populate({ path: "createdBy", select: "fullName" })
+    .populate({ path: "updatedBy", select: "fullName" })
+    .populate({
+      path: "containers",
+      populate: [
+        { path: "createdBy", select: "fullName" },
+        { path: "updatedBy", select: "fullName" },
+        { path: "destination" },
+        {
+          path: "lorryId",
+          select: "lorryNum capacity owner",
+          populate: {
+            path: "owner",
+            select: "ownerName companyName phoneNum",
+          },
+        },
+      ],
+    });
+  if (!assignment) return null;
+
+  const obj = assignment.toObject();
+  obj.containers = applyHeldUpToContainers(
+    (obj.containers || [])
+      .filter((container) => container && (container.containerNo || container._id))
+      .map((container) => ({
+        ...container,
+        lorryNum: container.lorryNum || container.lorryId?.lorryNum,
+        capacity: container.capacity || container.lorryId?.capacity,
+        lorryOwner:
+          container.lorryOwner ||
+          container.lorryId?.owner?.ownerName ||
+          container.lorryId?.owner?.companyName,
+        destinationlocation:
+          container.destinationlocation || container.destination?.location,
+        destinationtype:
+          container.destinationtype || container.destination?.type,
+        lorryownerphn:
+          container.lorryownerphn || container.lorryId?.owner?.phoneNum,
+        lorryownerCompany:
+          container.lorryownerCompany || container.lorryId?.owner?.companyName,
+      })),
+    await loadHeldUpRates()
+  );
+
+  const statusCount = obj.containers.reduce(
+    (acc, container) => {
+      const status = container.status;
+      if (!acc[status]) acc[status] = 0;
+      acc[status] += 1;
+      return acc;
+    },
+    { "in-progress": 0, completed: 0, pending: 0 }
+  );
+  const allCompleted =
+    obj.containers.length > 0 &&
+    obj.containers.every((container) => container.status === "completed");
+
+  return {
+    ...obj,
+    status: allCompleted ? "completed" : "pending",
+    ...statusCount,
+  };
+}
+
+function syncAssignment(req, action, id) {
+  if (!id) return;
+  if (action === "deleted") {
+    emitAssignmentChange(req, { action, id: String(id) }, null);
+    return;
+  }
+  loadAssignmentForSync(id)
+    .then((assignment) => {
+      if (!assignment) return;
+      emitAssignmentChange(
+        req,
+        { action, id: String(assignment._id) },
+        assignment
+      );
+    })
+    .catch((error) => {
+      console.error("Socket assignment emit failed:", error.message);
+    });
+}
+
+exports.getNextVocNo = async (req, res) => {
+  try {
+    const nextNumber = (await getMaxVocNumber()) + 1;
+    res.status(200).json({
+      success: true,
+      nextNumber,
+      next: formatVocNo(nextNumber),
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Could not get the next VOC number. Please try again.",
+    });
+  }
+};
+
 exports.createAssignLorry = async (req, res) => {
   try {
     const { userid } = req.tokenData;
@@ -12,34 +170,45 @@ exports.createAssignLorry = async (req, res) => {
       updatedAt: new Date(),
     };
     if (assignmentData.containers && Array.isArray(assignmentData.containers)) {
-      assignmentData.containers = assignmentData.containers.map((c) => ({
-        ...c,
-        createdBy: userid,
-        updatedBy: userid,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }));
-    }
-    AssignLorry.create(assignmentData)
-      .then((result) => {
-        return res.status(201).send({
-          status: 0,
-          success: true,
-          data: result,
-        });
-      })
-      .catch((e) => {
-        return res.status(500).json({
-          message: "Something went wrong",
-          success: false,
-          error: e.message,
-        });
+      const vocNos = await nextVocNumbers(assignmentData.containers.length);
+      const rates = await loadHeldUpRates();
+      assignmentData.containers = assignmentData.containers.map((c, index) => {
+        const withHeldUp = applyHeldUpToContainer(c, rates);
+        delete withHeldUp.heldUpExtraDays;
+        delete withHeldUp.heldUpRate;
+        return {
+          ...withHeldUp,
+          vocNo: vocNos[index],
+          destination: withHeldUp.destination || undefined,
+          createdBy: userid,
+          updatedBy: userid,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
       });
+    }
+
+    const result = await AssignLorry.create(assignmentData);
+    syncAssignment(req, "created", result._id);
+    return res.status(201).send({
+      status: 0,
+      success: true,
+      data: result,
+    });
   } catch (error) {
-    res.status(400).json({
+    if (
+      error.name === "ValidationError" ||
+      error.name === "CastError" ||
+      error.code === 11000
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: formatSaveError(error),
+      });
+    }
+    res.status(500).json({
       success: false,
-      message: "Failed to create assignment.",
-      error: error.message,
+      message: "Could not create the assignment. Please try again.",
     });
   }
 };
@@ -54,7 +223,14 @@ exports.getAllAssignLorries = async (req, res) => {
           { path: "createdBy", select: "fullName" },
           { path: "updatedBy", select: "fullName" },
           { path: "destination" },
-          { path: "lorryId" },
+          {
+            path: "lorryId",
+            select: "lorryNum capacity owner",
+            populate: {
+              path: "owner",
+              select: "ownerName companyName",
+            },
+          },
         ],
       });
     const assignmentsWithStatus = assignments.map((assignment) => {
@@ -62,8 +238,20 @@ exports.getAllAssignLorries = async (req, res) => {
         (c) => c.status === "completed"
       );
       const overallStatus = allCompleted ? "completed" : "pending";
+      const obj = assignment.toObject();
+      obj.containers = (obj.containers || []).map((container) => ({
+        ...container,
+        lorryNum: container.lorryNum || container.lorryId?.lorryNum,
+        capacity: container.capacity || container.lorryId?.capacity,
+        lorryOwner:
+          container.lorryOwner ||
+          container.lorryId?.owner?.ownerName ||
+          container.lorryId?.owner?.companyName,
+        destinationlocation:
+          container.destinationlocation || container.destination?.location,
+      }));
       return {
-        ...assignment.toObject(),
+        ...obj,
         status: overallStatus,
       };
     });
@@ -78,8 +266,7 @@ exports.getAllAssignLorries = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch assignments.",
-      error: error.message,
+      message: "Could not load assignments. Please try again.",
     });
   }
 };
@@ -128,6 +315,11 @@ exports.getAssignLorryById = async (req, res) => {
       ...assignment.toObject(),
       status: overallStatus,
     };
+    const rates = await loadHeldUpRates();
+    assignmentWithStatus.containers = applyHeldUpToContainers(
+      assignmentWithStatus.containers,
+      rates
+    );
     res.status(200).json({
       success: true,
       data: assignmentWithStatus,
@@ -135,8 +327,7 @@ exports.getAssignLorryById = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch assignment.",
-      error: error.message,
+      message: "Could not load this assignment. Please try again.",
     });
   }
 };
@@ -418,8 +609,11 @@ exports.getAssignLorryByIds = async (req, res) => {
         message: "Assignment not found.",
       });
     }
-    newassignment.containers = (newassignment.containers || []).filter(
-      (c) => c && (c.containerNo || c._id)
+    newassignment.containers = applyHeldUpToContainers(
+      (newassignment.containers || []).filter(
+        (c) => c && (c.containerNo || c._id)
+      ),
+      await loadHeldUpRates()
     );
 
     const statusCount = newassignment.containers.reduce(
@@ -455,8 +649,7 @@ exports.getAssignLorryByIds = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch assignment.",
-      error: error.message,
+      message: "Could not load this assignment. Please try again.",
     });
   }
 };
@@ -479,6 +672,7 @@ exports.deleteAssignLorry = async (req, res) => {
       });
     }
 
+    syncAssignment(req, "deleted", id);
     res.status(200).json({
       success: true,
       message: "Assignment deleted successfully.",
@@ -486,8 +680,7 @@ exports.deleteAssignLorry = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to delete assignment.",
-      error: error.message,
+      message: "Could not delete the assignment. Please try again.",
     });
   }
 };
@@ -505,7 +698,7 @@ exports.updateBasicinfo = async (req, res) => {
     const deletedAssignment = await AssignLorry.findByIdAndUpdate(
       { _id: id },
       { ...req.body, updatedBy: userid, updatedAt: new Date() },
-      { new: true }
+      { new: true, runValidators: true }
     );
 
     if (!deletedAssignment) {
@@ -515,15 +708,21 @@ exports.updateBasicinfo = async (req, res) => {
       });
     }
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Assignment updated successfully.",
     });
   } catch (error) {
+    if (error.name === "ValidationError" || error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: formatSaveError(error),
+      });
+    }
     res.status(500).json({
       success: false,
-      message: "Failed to delete assignment.",
-      error: error.message,
+      message: "Could not update the assignment. Please try again.",
     });
   }
 };
@@ -542,6 +741,18 @@ exports.addContainer = async (req, res) => {
     if (newContainer.balancePaid && !newContainer.balanceDate) {
       newContainer.balanceDate = new Date();
     }
+    if (!newContainer.destination) {
+      delete newContainer.destination;
+    }
+    const [vocNo] = await nextVocNumbers(1);
+    newContainer.vocNo = vocNo;
+    const withHeldUp = applyHeldUpToContainer(
+      newContainer,
+      await loadHeldUpRates()
+    );
+    delete withHeldUp.heldUpExtraDays;
+    delete withHeldUp.heldUpRate;
+    Object.assign(newContainer, withHeldUp);
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res
@@ -561,16 +772,22 @@ exports.addContainer = async (req, res) => {
         .json({ success: false, message: "Assignment not found." });
     }
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Container added successfully.",
       data: updatedAssignment,
     });
   } catch (error) {
+    if (error.name === "ValidationError" || error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: formatSaveError(error),
+      });
+    }
     res.status(500).json({
       success: false,
-      message: "Failed to add container.",
-      error: error.message,
+      message: "Could not add the container. Please try again.",
     });
   }
 };
@@ -599,6 +816,7 @@ exports.removeContainer = async (req, res) => {
         .json({ success: false, message: "Assignment not found." });
     }
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Container removed successfully.",
@@ -607,8 +825,7 @@ exports.removeContainer = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to remove container.",
-      error: error.message,
+      message: "Could not remove the container. Please try again.",
     });
   }
 };
@@ -618,7 +835,6 @@ exports.updateContainerDetails = async (req, res) => {
     const body = stripDeniedFromBody(req.body || {}, req.authRole);
     const allowed = [
       "containerNo",
-      "vocNo",
       "lorryId",
       "loadingDate",
       "demoundDate",
@@ -654,6 +870,7 @@ exports.updateContainerDetails = async (req, res) => {
     };
     allowed.forEach((key) => {
       if (body[key] !== undefined) {
+        if (key === "destination" && !body[key]) return;
         $set[`containers.$.${key}`] = body[key];
       }
     });
@@ -662,6 +879,22 @@ exports.updateContainerDetails = async (req, res) => {
     }
     if (body.advanced !== undefined && body.advancedDate === undefined) {
       $set["containers.$.advancedDate"] = new Date();
+    }
+
+    const existingAssignment = await AssignLorry.findOne({
+      _id: id,
+      "containers._id": containerId,
+    });
+    const existing = existingAssignment?.containers?.id(containerId);
+    if (existing) {
+      const withHeldUp = applyHeldUpToContainer(
+        {
+          loadingDate: body.loadingDate ?? existing.loadingDate,
+          demoundDate: body.demoundDate ?? existing.demoundDate,
+        },
+        await loadHeldUpRates()
+      );
+      $set["containers.$.heldUp"] = withHeldUp.heldUp;
     }
 
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
@@ -679,16 +912,22 @@ exports.updateContainerDetails = async (req, res) => {
       });
     }
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Container details updated successfully.",
       data: updatedAssignment,
     });
   } catch (error) {
+    if (error.name === "ValidationError" || error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: formatSaveError(error),
+      });
+    }
     res.status(500).json({
       success: false,
-      message: "Failed to update container details.",
-      error: error.message,
+      message: "Could not update the container. Please try again.",
     });
   }
 };
@@ -721,6 +960,8 @@ exports.payContainerBalance = async (req, res) => {
         .json({ success: false, message: "Container does not exist." });
     }
 
+    const rates = await loadHeldUpRates();
+    const charged = applyHeldUpToContainer(container, rates);
     const chargeKeys = [
       "weight",
       "dayHire",
@@ -730,7 +971,7 @@ exports.payContainerBalance = async (req, res) => {
       "return",
     ];
     const total = chargeKeys.reduce(
-      (sum, key) => sum + Number(container[key] || 0),
+      (sum, key) => sum + Number(charged[key] || 0),
       0
     );
     const remaining =
@@ -749,6 +990,7 @@ exports.payContainerBalance = async (req, res) => {
       { _id: id, "containers._id": containerId },
       {
         $set: {
+          "containers.$.heldUp": charged.heldUp,
           "containers.$.balancePaid":
             Number(container.balancePaid || 0) + remaining,
           "containers.$.balanceDate": balanceDate,
@@ -759,6 +1001,7 @@ exports.payContainerBalance = async (req, res) => {
       { new: true }
     );
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Balance paid successfully.",
@@ -767,8 +1010,7 @@ exports.payContainerBalance = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to pay container balance.",
-      error: error.message,
+      message: "Could not pay the container balance. Please try again.",
     });
   }
 };
@@ -780,9 +1022,10 @@ const hireChargeKeys = [
   "heldUp",
   "return",
 ];
-const remainingHire = (container) => {
+const remainingHire = (container, rates) => {
+  const charged = applyHeldUpToContainer(container, rates);
   const total = hireChargeKeys.reduce(
-    (sum, key) => sum + Number(container[key] || 0),
+    (sum, key) => sum + Number(charged[key] || 0),
     0
   );
   return (
@@ -819,13 +1062,15 @@ exports.payContainersBalance = async (req, res) => {
         .json({ success: false, message: "Assignment not found." });
     }
 
+    const rates = await loadHeldUpRates();
     let paidCount = 0;
     containerIds.forEach((containerId) => {
       if (!mongoose.Types.ObjectId.isValid(containerId)) return;
       const container = assignment.containers.id(containerId);
       if (!container) return;
-      const remaining = remainingHire(container);
+      const remaining = remainingHire(container, rates);
       if (remaining <= 0) return;
+      container.heldUp = applyHeldUpToContainer(container, rates).heldUp;
       container.balancePaid = Number(container.balancePaid || 0) + remaining;
       container.balanceDate = balanceDate;
       container.updatedBy = userid;
@@ -843,6 +1088,7 @@ exports.payContainersBalance = async (req, res) => {
     assignment.updatedBy = userid;
     await assignment.save();
 
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Balances paid successfully.",
@@ -852,8 +1098,7 @@ exports.payContainersBalance = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to pay container balances.",
-      error: error.message,
+      message: "Could not pay the selected balances. Please try again.",
     });
   }
 };
@@ -896,6 +1141,7 @@ exports.updatedContainerStatus = async (req, res) => {
         message: "Assignment not found or container does not exist.",
       });
     }
+    syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Container details updated successfully.",
@@ -904,8 +1150,7 @@ exports.updatedContainerStatus = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to update container details.",
-      error: error.message,
+      message: "Could not update the container status. Please try again.",
     });
   }
 };

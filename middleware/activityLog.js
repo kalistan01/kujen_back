@@ -1,5 +1,21 @@
 const jwt = require("jsonwebtoken");
 const { User, ActivityLog, Destination } = require("../models");
+const { emitChange } = require("../lib/socket");
+const {
+  assignmentIdFromRequest,
+  shouldLoadAssignment,
+  loadPreviousAssignment,
+  assignmentChangeSummary,
+} = require("./assignmentLogDetails");
+const {
+  loadPreviousEntities,
+  entityIdFromRequest,
+  userChangeSummary,
+  roleChangeSummary,
+  lorryChangeSummary,
+  heldUpChangeSummary,
+  authChangeSummary,
+} = require("./entityLogDetails");
 
 const SKIP_PREFIXES = ["/logs"];
 
@@ -52,6 +68,10 @@ function describeAction(req) {
     return { module: "assignment", action: "Exported PDF" };
   if (url.includes("/assignlorry") && url.includes("/export/excel"))
     return { module: "assignment", action: "Exported Excel" };
+  if (url.includes("/assignlorry") && url.includes("/pay-balances"))
+    return { module: "assignment", action: "Paid selected balances" };
+  if (url.includes("/assignlorry") && url.includes("/balance"))
+    return { module: "assignment", action: "Paid container balance" };
   if (url.includes("/assignlorry") && url.includes("/containers")) {
     if (method === "POST")
       return { module: "assignment", action: "Added container" };
@@ -101,6 +121,11 @@ function describeAction(req) {
     }
   }
 
+  if (url.includes("/heldup")) {
+    if (method === "POST")
+      return { module: "heldup", action: "Created held up rate" };
+  }
+
   if (url.includes("/addRole") || (url.includes("/role") && method === "POST"))
     return { module: "role", action: "Created role" };
   if (url.includes("/updateRole"))
@@ -135,12 +160,18 @@ function buildSummary(req, described) {
     return `${described.action} · ${[body.type, body.location]
       .filter(Boolean)
       .join(" · ")}`;
+  if (body.amount !== undefined && body.date)
+    return `${described.action} · Rs ${body.amount} · ${body.date}`;
   if (body.containerNo) return `${described.action} · ${body.containerNo}`;
+  if (Array.isArray(body.containerIds) && body.containerIds.length) {
+    return `${described.action} · ${body.containerIds.length} container${
+      body.containerIds.length === 1 ? "" : "s"
+    }`;
+  }
   return described.action;
 }
 
-function destinationIdFromRequest(req) {
-  const url = String(req.originalUrl || req.path || "").split("?")[0];
+function destinationIdFromRequest(req) {  const url = String(req.originalUrl || req.path || "").split("?")[0];
   const match = url.match(/\/destination\/([a-fA-F0-9]{24})/);
   return match?.[1] || null;
 }
@@ -229,16 +260,66 @@ exports.activityLog = (req, res, next) => {
           }
         }
 
-        const isDestination = described.module === "destination";
-        const destinationLog = isDestination
-          ? destinationChangeSummary(req, described)
-          : null;
-        const summary = destinationLog
-          ? destinationLog.summary
-          : buildSummary(req, described);
+        let action = described.action;
+        let summary = buildSummary(req, described);
+        let extraPayload;
+        const success = res.statusCode < 400;
 
-        await ActivityLog.create({
-          action: destinationLog ? destinationLog.action : described.action,
+        if (described.module === "destination") {
+          const destinationLog = destinationChangeSummary(req, described);
+          action = destinationLog.action;
+          summary = destinationLog.summary;
+          extraPayload = { previous: req._previousDestination || undefined };
+        } else if (described.module === "assignment") {
+          const assignmentLog = await assignmentChangeSummary(req, described);
+          action = assignmentLog.action;
+          summary = assignmentLog.summary;
+        } else if (described.module === "user") {
+          const userLog = await userChangeSummary(req, described);
+          action = userLog.action;
+          summary = userLog.summary;
+          extraPayload = { previous: req._previousUser || undefined };
+        } else if (described.module === "role") {
+          const roleLog = roleChangeSummary(req, described);
+          action = roleLog.action;
+          summary = roleLog.summary;
+          extraPayload = { previous: req._previousRole || undefined };
+        } else if (described.module === "lorry") {
+          const lorryLog = lorryChangeSummary(req, described);
+          action = lorryLog.action;
+          summary = lorryLog.summary;
+          extraPayload = { previous: req._previousOwner || undefined };
+        } else if (described.module === "heldup") {
+          const heldUpLog = heldUpChangeSummary(req, described);
+          action = heldUpLog.action;
+          summary = heldUpLog.summary;
+        } else if (described.module === "auth") {
+          const authLog = authChangeSummary(req, described, success);
+          action = authLog.action;
+          summary = authLog.summary;
+          if (success && action === "Logged in") {
+            const loginEmail = String(req.body?.email || "").trim().toLowerCase();
+            const user =
+              (actorId &&
+                (await User.findById(actorId).populate("roleId", "roleName"))) ||
+              (loginEmail &&
+                (await User.findOne({ email: loginEmail }).populate(
+                  "roleId",
+                  "roleName"
+                )));
+            if (user) {
+              actorName = user.fullName;
+              actorEmail = user.email;
+              actorRole = user.roleId?.roleName || "";
+              summary = `Signed in as ${user.fullName}${
+                actorRole ? ` · ${actorRole}` : ""
+              }`;
+            }
+          }
+        }
+
+        const log = await ActivityLog.create({
+          action,
           module: described.module,
           method: req.method,
           path: String(req.originalUrl || req.path || "").split("?")[0],
@@ -248,17 +329,25 @@ exports.activityLog = (req, res, next) => {
           actorName,
           actorEmail,
           actorRole,
+          entityId:
+            assignmentIdFromRequest(req) ||
+            entityIdFromRequest(req) ||
+            undefined,
           summary,
-          payload: sanitize(
-            isDestination
-              ? {
-                  ...req.body,
-                  previous: req._previousDestination || undefined,
-                }
-              : req.body
-          ),
+          payload: sanitize({
+            ...(req.body || {}),
+            ...(extraPayload || {}),
+          }),
           ip: req.ip || req.headers["x-forwarded-for"] || "",
           userAgent: req.get("user-agent") || "",
+        });
+        emitChange(req, {
+          module: "log",
+          action: "created",
+          id: log._id,
+          actorId,
+          actorName,
+          data: log,
         });
       } catch (error) {
         console.error("Activity log failed:", error.message);
@@ -267,21 +356,22 @@ exports.activityLog = (req, res, next) => {
     next();
   };
 
-  const destinationId = destinationIdFromRequest(req);
-  if (
-    destinationId &&
-    (req.method === "PUT" || req.method === "DELETE")
-  ) {
-    Destination.findById(destinationId)
-      .select("type location status")
-      .lean()
-      .then((dest) => {
-        req._previousDestination = dest || null;
-        startLogging();
-      })
-      .catch(() => startLogging());
-    return;
-  }
-
-  startLogging();
+  Promise.resolve()
+    .then(async () => {
+      const destinationId = destinationIdFromRequest(req);
+      if (
+        destinationId &&
+        (req.method === "PUT" || req.method === "DELETE")
+      ) {
+        req._previousDestination = await Destination.findById(destinationId)
+          .select("type location status")
+          .lean();
+      }
+      if (shouldLoadAssignment(req)) {
+        await loadPreviousAssignment(req);
+      }
+      await loadPreviousEntities(req);
+    })
+    .catch(() => {})
+    .then(startLogging);
 };
