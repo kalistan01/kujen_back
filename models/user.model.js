@@ -34,6 +34,37 @@ const userSchema = new mongoose.Schema({
         type: Date,
         default: null,
     },
+    lastLoginAt: {
+        type: Date,
+        default: null,
+    },
+    lastLoginIp: {
+        type: String,
+        default: "",
+        trim: true,
+    },
+    lastLoginDevice: {
+        type: String,
+        default: "",
+        trim: true,
+    },
+    lastLoginUserAgent: {
+        type: String,
+        default: "",
+        trim: true,
+    },
+    loginDevices: {
+        type: [
+            {
+                device: { type: String, trim: true, default: "" },
+                userAgent: { type: String, trim: true, default: "" },
+                ip: { type: String, trim: true, default: "" },
+                lastLoginAt: { type: Date, default: null },
+                lastSeen: { type: Date, default: null },
+            },
+        ],
+        default: [],
+    },
 }, { timestamps: true });
 
 

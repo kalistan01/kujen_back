@@ -5,6 +5,7 @@ const { authCookie } = require("../../../config/cookie");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const { emitChange, onlineUserIds } = require("../../../lib/socket");
+const { upsertLoginDevice } = require("../../../lib/device");
 
 exports.adminsignUp = async (req, res) => {
   try {
@@ -86,9 +87,17 @@ exports.adminlogIn = async (req, res) => {
 
     // Set token in HTTP-only cookie
     res.cookie("token", jsonToken, authCookie);
-    await User.updateOne({ _id: admin._id }, { lastSeen: new Date() });
+    await upsertLoginDevice(admin._id, req);
 
     admin.password = undefined;
+    const synced = await userForSync(admin._id, req.app.get("io"));
+    emitChange(req, {
+      module: "user",
+      action: "updated",
+      id: admin._id,
+      actorId: "",
+      data: synced,
+    });
 
     return res.status(200).json({
       message: "Login successful",
@@ -313,7 +322,7 @@ exports.getUserById = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return sendError(res, 400, "Invalid user ID.");
     }
-    const user = await User.findById(userId).select("-password");
+    const user = await userForSync(userId, req.app.get("io"));
     if (!user) {
       return sendError(res, 404, "User not found.");
     }

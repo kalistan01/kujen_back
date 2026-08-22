@@ -8,7 +8,8 @@ const { User } = require("./models");
 const { publicUser, accessDeniedMessage } = require("./middleware/requireAdmin");
 const { activityLog } = require("./middleware/activityLog");
 const { authCookie } = require("./config/cookie");
-const { attachSocket } = require("./lib/socket");
+const { attachSocket, emitChange } = require("./lib/socket");
+const { removeLoginDevice } = require("./lib/device");
 
 const bodyParser = require('body-parser');
 const cookieParser = require("cookie-parser");
@@ -81,7 +82,33 @@ app.get("/api/v1/auth/check", async (req, res) => {
     res.status(401).json({ message: "Invalid token" });
   }
 });
-app.post("/api/v1/auth/logout", (req, res) => {
+app.post("/api/v1/auth/logout", async (req, res) => {
+  const token = req.cookies.token;
+  try {
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_KEY);
+      const userId = decoded.userid;
+      const devices = await removeLoginDevice(userId, req);
+      const latest = devices[0];
+      emitChange(req, {
+        module: "user",
+        action: "updated",
+        id: userId,
+        actorId: "",
+        data: {
+          _id: String(userId),
+          id: String(userId),
+          loginDevices: devices,
+          lastLoginDevice: latest?.device || "",
+          lastLoginIp: latest?.ip || "",
+          lastLoginAt: latest?.lastLoginAt || null,
+          lastLoginUserAgent: latest?.userAgent || "",
+        },
+      });
+    }
+  } catch {
+    // Cookie is still cleared even if the device row could not be updated.
+  }
   res.clearCookie("token", {
     httpOnly: authCookie.httpOnly,
     secure: authCookie.secure,
