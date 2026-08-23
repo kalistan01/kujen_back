@@ -81,7 +81,10 @@ exports.addRole = async (req, res) => {
 
 exports.findRole = async (req, res) => {
   try {
-    const result = await Role.find();
+    const result = await Role.find()
+      .select("roleName permission denied status admin createdAt updatedAt")
+      .sort({ createdAt: -1 })
+      .lean();
     return res.status(200).send({
       success: true,
       data: result,

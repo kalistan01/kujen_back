@@ -1,5 +1,5 @@
 const express = require("express");
-const { addRole, findRole, updateRole, findRoleId, deactivateRole, activateRole } = require(".//role.controller");
+const { addRole, findRole, updateRole, findRoleId, deactivateRole, activateRole } = require("./role.controller");
 const { checkToken } = require("../../../middleware/token");
 const { loadAuthRole, requireCan } = require("../../../middleware/rbac");
 const router = express.Router();

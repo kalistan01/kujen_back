@@ -288,12 +288,20 @@ exports.getAllUsers = async (req, res) => {
           roleId: "$role._id",
         },
       },
-
+      { $sort: { createdAt: -1 } },
       {
         $project: {
-          password: 0,
-          role: 0,
-          __v: 0,
+          fullName: 1,
+          email: 1,
+          status: 1,
+          roleId: 1,
+          roleName: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          lastSeen: 1,
+          lastLoginAt: 1,
+          lastLoginIp: 1,
+          lastLoginDevice: 1,
         },
       },
     ]);
