@@ -887,10 +887,16 @@ exports.updateContainerDetails = async (req, res) => {
     });
     const existing = existingAssignment?.containers?.id(containerId);
     if (existing) {
+      const existingObj = existing.toObject ? existing.toObject() : existing;
       const withHeldUp = applyHeldUpToContainer(
         {
+          ...existingObj,
+          ...body,
           loadingDate: body.loadingDate ?? existing.loadingDate,
           demoundDate: body.demoundDate ?? existing.demoundDate,
+          status: body.status ?? existing.status,
+          advanced: body.advanced ?? existing.advanced,
+          balancePaid: body.balancePaid ?? existing.balancePaid,
         },
         await loadHeldUpRates()
       );
