@@ -7,6 +7,7 @@ const {
   loadHeldUpRates,
 } = require("../../lib/heldUpCalc");
 const { emitAssignmentChange } = require("../../lib/socket");
+const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
 
 function formatSaveError(error) {
   if (error?.name === "ValidationError") {
@@ -27,6 +28,16 @@ function formatSaveError(error) {
   }
 
   return error?.message || "Something went wrong. Please try again.";
+}
+
+function applyAdvancedDate(container = {}) {
+  const next = { ...container };
+  if ((Number(next.advanced) || 0) > 0) {
+    if (!next.advancedDate) next.advancedDate = new Date();
+  } else {
+    delete next.advancedDate;
+  }
+  return next;
 }
 
 function vocSequenceFrom(value) {
@@ -172,20 +183,35 @@ exports.createAssignLorry = async (req, res) => {
     if (assignmentData.containers && Array.isArray(assignmentData.containers)) {
       const vocNos = await nextVocNumbers(assignmentData.containers.length);
       const rates = await loadHeldUpRates();
-      assignmentData.containers = assignmentData.containers.map((c, index) => {
-        const withHeldUp = applyHeldUpToContainer(c, rates);
+      const nextContainers = [];
+      for (let index = 0; index < assignmentData.containers.length; index += 1) {
+        const withHeldUp = applyAdvancedDate(
+          applyHeldUpToContainer(
+            assignmentData.containers[index],
+            rates
+          )
+        );
         delete withHeldUp.heldUpExtraDays;
         delete withHeldUp.heldUpRate;
-        return {
+        const applied = applyFclToContainer(withHeldUp);
+        if (applied.error) {
+          return res.status(400).json({
+            success: false,
+            message: applied.error,
+          });
+        }
+        nextContainers.push({
           ...withHeldUp,
+          fcl: applied.fcl,
           vocNo: vocNos[index],
           destination: withHeldUp.destination || undefined,
           createdBy: userid,
           updatedBy: userid,
           createdAt: new Date(),
           updatedAt: new Date(),
-        };
-      });
+        });
+      }
+      assignmentData.containers = nextContainers;
     }
 
     const result = await AssignLorry.create(assignmentData);
@@ -735,9 +761,6 @@ exports.addContainer = async (req, res) => {
     newContainer.updatedBy = userid;
     newContainer.createdAt = new Date();
     newContainer.updatedAt = new Date();
-    if (!newContainer.advancedDate) {
-      newContainer.advancedDate = new Date();
-    }
     if (newContainer.balancePaid && !newContainer.balanceDate) {
       newContainer.balanceDate = new Date();
     }
@@ -746,13 +769,17 @@ exports.addContainer = async (req, res) => {
     }
     const [vocNo] = await nextVocNumbers(1);
     newContainer.vocNo = vocNo;
-    const withHeldUp = applyHeldUpToContainer(
-      newContainer,
-      await loadHeldUpRates()
+    const withHeldUp = applyAdvancedDate(
+      applyHeldUpToContainer(
+        newContainer,
+        await loadHeldUpRates()
+      )
     );
     delete withHeldUp.heldUpExtraDays;
     delete withHeldUp.heldUpRate;
     Object.assign(newContainer, withHeldUp);
+    if (!withHeldUp.advancedDate) delete newContainer.advancedDate;
+    newContainer.fcl = emptyFcl();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res
@@ -868,17 +895,16 @@ exports.updateContainerDetails = async (req, res) => {
       "containers.$.updatedBy": userid,
       "containers.$.updatedAt": new Date(),
     };
+    const $unset = {};
     allowed.forEach((key) => {
       if (body[key] !== undefined) {
         if (key === "destination" && !body[key]) return;
+        if (key === "advancedDate") return;
         $set[`containers.$.${key}`] = body[key];
       }
     });
     if (body.balancePaid && body.balanceDate === undefined) {
       $set["containers.$.balanceDate"] = new Date();
-    }
-    if (body.advanced !== undefined && body.advancedDate === undefined) {
-      $set["containers.$.advancedDate"] = new Date();
     }
 
     const existingAssignment = await AssignLorry.findOne({
@@ -901,11 +927,23 @@ exports.updateContainerDetails = async (req, res) => {
         await loadHeldUpRates()
       );
       $set["containers.$.heldUp"] = withHeldUp.heldUp;
+      const dated = applyAdvancedDate({
+        advanced: body.advanced ?? existing.advanced,
+        advancedDate:
+          body.advancedDate !== undefined
+            ? body.advancedDate
+            : existing.advancedDate,
+      });
+      if (dated.advancedDate) {
+        $set["containers.$.advancedDate"] = dated.advancedDate;
+      } else {
+        $unset["containers.$.advancedDate"] = 1;
+      }
     }
 
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      { $set },
+      Object.keys($unset).length ? { $set, $unset } : { $set },
       {
         new: true,
       }
@@ -1111,7 +1149,7 @@ exports.payContainersBalance = async (req, res) => {
 exports.updatedContainerStatus = async (req, res) => {
   try {
     const { id, containerId } = req.params;
-    const { status } = req.body;
+    const { status, fcl } = req.body;
     const { userid } = req.tokenData;
 
     if (
@@ -1123,22 +1161,34 @@ exports.updatedContainerStatus = async (req, res) => {
         .json({ success: false, message: "Invalid ID format provided." });
     }
 
-    if (status === undefined) {
+    if (status === undefined && fcl === undefined) {
       return res.status(400).json({
         success: false,
-        message: "No status or returnValue provided for update.",
+        message: "No status or FCL update provided.",
       });
+    }
+
+    const $set = {
+      "containers.$.updatedBy": userid,
+      "containers.$.updatedAt": new Date(),
+    };
+    if (status !== undefined) {
+      $set["containers.$.status"] = status;
+    }
+    if (fcl !== undefined) {
+      const applied = applyFclToContainer({ fcl });
+      if (applied.error) {
+        return res.status(400).json({
+          success: false,
+          message: applied.error,
+        });
+      }
+      $set["containers.$.fcl"] = applied.fcl;
     }
 
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      {
-        $set: {
-          "containers.$.status": status,
-          "containers.$.updatedBy": userid,
-          "containers.$.updatedAt": new Date(),
-        },
-      },
+      { $set },
       { new: true }
     );
     if (!updatedAssignment) {

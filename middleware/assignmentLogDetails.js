@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const { AssignLorry, Lorry, Destination } = require("../models");
+const { formatFclRecord } = require("../lib/fcl");
 
 const ASSIGNMENT_FIELDS = [
   ["blNo", "BL number"],
@@ -31,6 +32,7 @@ const CONTAINER_FIELDS = [
   ["transportCommission", "Transport commission"],
   ["return", "Return"],
   ["status", "Status"],
+  ["fcl", "FCL status"],
 ];
 
 const MONEY_KEYS = new Set([
@@ -124,6 +126,7 @@ function displayValue(value, key) {
     }
     return String(value);
   }
+  if (key === "fcl") return formatFclRecord(value);
   if (MONEY_KEYS.has(key)) return formatMoney(value);
   if (DATE_KEYS.has(key)) return formatDate(value);
   return String(value);
@@ -133,6 +136,7 @@ function sameValue(previous, next, key) {
   if (key === "lorryId" || key === "destination") {
     return idOf(previous) === idOf(next);
   }
+  if (key === "fcl") return formatFclRecord(previous) === formatFclRecord(next);
   if (DATE_KEYS.has(key)) return formatDate(previous) === formatDate(next);
   if (MONEY_KEYS.has(key)) return Number(previous || 0) === Number(next || 0);
   return String(previous ?? "").trim() === String(next ?? "").trim();
@@ -304,9 +308,15 @@ async function assignmentChangeSummary(req, described) {
   }
 
   if (method === "PATCH" && url.includes("/containers")) {
+    const label = previousContainer?.containerNo || "container";
+    if (body.fcl !== undefined) {
+      return {
+        action: "Updated container FCL",
+        summary: `${label}: FCL ${formatFclRecord(previousContainer?.fcl)} → ${formatFclRecord(body.fcl)}`,
+      };
+    }
     const from = previousContainer?.status || "—";
     const to = body.status || "—";
-    const label = previousContainer?.containerNo || "container";
     return {
       action: "Updated container status",
       summary: `Changed status of ${label} from ${from} to ${to}`,

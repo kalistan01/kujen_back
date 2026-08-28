@@ -71,11 +71,11 @@ const assignLorrySchema = new mongoose.Schema(
         },
         weight: {
           type: Number,
-          required: [true, "Weight is required."],
+          default: 0,
         },
         dayHire: {
           type: Number,
-          required: [true, "Day hire amount is required."],
+          default: 0,
         },
 
         outHire: {
@@ -86,11 +86,10 @@ const assignLorrySchema = new mongoose.Schema(
         },
         advanced: {
           type: Number,
-          required: [true, "Advanced payment amount is required."],
+          default: 0,
         },
         advancedDate: {
           type: Date,
-          default: Date.now,
         },
         balancePaid: {
           type: Number,
@@ -113,6 +112,24 @@ const assignLorrySchema = new mongoose.Schema(
           type: Number,
         },
 
+        fcl: {
+          enabled: {
+            type: Boolean,
+            default: false,
+          },
+          received: {
+            done: { type: Boolean, default: false },
+            date: { type: Date },
+          },
+          submitted: {
+            done: { type: Boolean, default: false },
+            date: { type: Date },
+          },
+          paymentReceived: {
+            done: { type: Boolean, default: false },
+            date: { type: Date },
+          },
+        },
         ot: {
           containerNo: {
             type: String,

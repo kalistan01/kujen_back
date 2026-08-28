@@ -7,6 +7,7 @@ const {
   applyHeldUpToContainers,
   loadHeldUpRates,
 } = require("../../lib/heldUpCalc");
+const { formatFclRecord } = require("../../lib/fcl");
 
 const CHARGE_FIELDS = [
   ["weight", "Weight"],
@@ -80,7 +81,7 @@ const containerTotal = (c = {}, role) =>
   visibleCharges(role).reduce((sum, [key]) => sum + toAmount(c[key]), 0);
 
 const fileBase = (assignment) =>
-  `RG-Brothers-BL-${assignment?.blNo || "assignment"}`.replace(
+  `RG-Business-transport-BL-${assignment?.blNo || "assignment"}`.replace(
     /[\\/:*?"<>|]/g,
     "-"
   );
@@ -190,7 +191,7 @@ function sendFile(res, buffer, filename, contentType) {
 
 async function buildExcel(assignment, role) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Brothers";
+  workbook.creator = "RG Business transport";
   const sheet = workbook.addWorksheet("Assignment");
 
   sheet.columns = [
@@ -205,6 +206,7 @@ async function buildExcel(assignment, role) {
     { header: "Container No", key: "containerNo", width: 16 },
     { header: "VOC No", key: "vocNo", width: 14 },
     { header: "Container Status", key: "containerStatus", width: 16 },
+    { header: "FCL Status", key: "fclStatus", width: 22 },
     { header: "Lorry", key: "lorry", width: 18 },
     { header: "Owner", key: "owner", width: 16 },
     { header: "Destination", key: "destination", width: 16 },
@@ -237,12 +239,6 @@ async function buildExcel(assignment, role) {
     ...(canSeeField(role, "heldUp")
       ? [{ header: "Held Up", key: "heldUp", width: 12 }]
       : []),
-    ...(canSeeField(role, "agentFee")
-      ? [{ header: "Agent Fee", key: "agentFee", width: 12 }]
-      : []),
-    ...(canSeeField(role, "transportCommission")
-      ? [{ header: "Transport Commission", key: "transportCommission", width: 18 }]
-      : []),
     ...(canSeeField(role, "return")
       ? [{ header: "Return", key: "return", width: 12 }]
       : []),
@@ -253,10 +249,6 @@ async function buildExcel(assignment, role) {
           { header: "Balance", key: "balance", width: 12 },
         ]
       : []),
-    { header: "Created by", key: "createdBy", width: 16 },
-    { header: "Created at", key: "createdAt", width: 20 },
-    { header: "Updated by", key: "updatedBy", width: 16 },
-    { header: "Updated at", key: "updatedAt", width: 20 },
   ];
 
   const moneyKeys = [
@@ -267,8 +259,6 @@ async function buildExcel(assignment, role) {
     "outHire",
     "other",
     "heldUp",
-    "agentFee",
-    "transportCommission",
     "return",
     "total",
     "paid",
@@ -291,8 +281,6 @@ async function buildExcel(assignment, role) {
     outHire: 0,
     other: 0,
     heldUp: 0,
-    agentFee: 0,
-    transportCommission: 0,
     return: 0,
     total: 0,
     paid: 0,
@@ -314,6 +302,7 @@ async function buildExcel(assignment, role) {
       containerNo: c.containerNo || "",
       vocNo: c.vocNo || "",
       containerStatus: (c.status || "").replace(/-/g, " "),
+      fclStatus: formatFclRecord(c.fcl),
       lorry: c.containerNo ? lorryLabel(c) : "",
       owner: c.containerNo ? ownerLabel(c) : "",
       destination: c.containerNo ? destLabel(c) : "",
@@ -328,16 +317,10 @@ async function buildExcel(assignment, role) {
       outHire: toAmount(c.outHire),
       other: toAmount(c.other),
       heldUp: toAmount(c.heldUp),
-      agentFee: toAmount(c.agentFee),
-      transportCommission: toAmount(c.transportCommission),
       return: toAmount(c.return),
       total,
       paid,
       balance: total - paid,
-      createdBy: assignment.createdBy || "",
-      createdAt: formatDateTime(assignment.createdAt),
-      updatedBy: assignment.updatedBy || "",
-      updatedAt: formatDateTime(assignment.updatedAt),
     };
     sheet.addRow(row);
     moneyKeys.forEach((key) => {
@@ -383,7 +366,7 @@ function buildPdf(assignment, role) {
       width: 36,
       align: "center",
     });
-    doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers", 82, 28);
+    doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
     doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 82, 50);
     doc.fillColor("#FFFFFF").fontSize(8).text("BILL OF LADING", 0, 26, {
       align: "right",
@@ -467,6 +450,7 @@ function buildPdf(assignment, role) {
         ["Destination", destLabel(c)],
         ["Loading", formatDate(c.loadingDate)],
         ["Demount", formatDate(c.demoundDate)],
+        ["FCL Status", formatFclRecord(c.fcl)],
       ]);
 
       const charges = [
@@ -491,10 +475,6 @@ function buildPdf(assignment, role) {
         canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
         canSeeField(role, "other") ? ["Other", c.other] : null,
         canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
-        canSeeField(role, "agentFee") ? ["Agent Fee", c.agentFee] : null,
-        canSeeField(role, "transportCommission")
-          ? ["Transport Commission", c.transportCommission]
-          : null,
         canSeeField(role, "return") ? ["Return", c.return] : null,
       ].filter(Boolean);
       const tableTop = y;
@@ -548,11 +528,6 @@ function buildPdf(assignment, role) {
             ["Remaining", money(fin.remaining), true],
           ]
         : []),
-      ...visibleCommissions(role).map(([key, label]) => [
-        label,
-        money(fin.commissions[key]),
-        false,
-      ]),
     ];
     if (y + summaryRows.length * 16 > 760) {
       doc.addPage();
@@ -575,18 +550,12 @@ function buildPdf(assignment, role) {
     });
     y += summaryRows.length * 16 + 16;
 
-    section("Record");
-    doc.fillColor(navy).font("Helvetica").fontSize(9)
-      .text(`Created by ${assignment.createdBy || "—"}  ·  ${formatDateTime(assignment.createdAt)}`, 36, y);
-    doc.text(`Updated by ${assignment.updatedBy || "—"}  ·  ${formatDateTime(assignment.updatedAt)}`, 36, y + 14);
-    y += 40;
-
     if (y > 800) {
       doc.addPage();
       y = 40;
     }
     doc.fillColor("#667085").fontSize(8).text(
-      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
       36,
       y,
       { width: pageW - 72, align: "center" }
@@ -709,7 +678,7 @@ async function loadAssignments(query = {}) {
 
 async function buildListExcel(assignments) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Brothers";
+  workbook.creator = "RG Business transport";
   const sheet = workbook.addWorksheet("Assignments");
 
   sheet.columns = [
@@ -786,7 +755,7 @@ function buildListPdf(assignments, query = {}) {
         width: 34,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers", 80, 22);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 80, 22);
       doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 80, 44);
       doc.fillColor("#FFFFFF").fontSize(8).text("ASSIGNMENTS", 0, 22, {
         align: "right",
@@ -870,7 +839,7 @@ function buildListPdf(assignments, query = {}) {
       .font("Helvetica")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
         36,
         pageH - 28,
         { width: pageW - 72, align: "center" }
@@ -887,7 +856,7 @@ exports.exportAssignmentsExcel = async (req, res) => {
     return sendFile(
       res,
       Buffer.from(buffer),
-      "RG-Brothers-Assignments.xlsx",
+      "RG-Business-transport-Assignments.xlsx",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
   } catch (error) {
@@ -906,7 +875,7 @@ exports.exportAssignmentsPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Brothers-Assignments.pdf",
+      "RG-Business-transport-Assignments.pdf",
       "application/pdf"
     );
   } catch (error) {
@@ -1031,7 +1000,7 @@ function buildSelectedContainersPdf(rows, role) {
         width: 36,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers", 82, 28);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
       doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 82, 50);
       doc.fillColor("#FFFFFF").fontSize(8).text("SELECTED CONTAINERS", 0, 26, {
         align: "right",
@@ -1132,6 +1101,7 @@ function buildSelectedContainersPdf(rows, role) {
           ["Destination", destLabel(c)],
           ["Loading", formatDateDmy(c.loadingDate)],
           ["Demount", formatDateDmy(c.demoundDate)],
+          ["FCL Status", formatFclRecord(c.fcl)],
         ]);
 
         const charges = [
@@ -1156,10 +1126,6 @@ function buildSelectedContainersPdf(rows, role) {
           canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
           canSeeField(role, "other") ? ["Other", c.other] : null,
           canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
-          canSeeField(role, "agentFee") ? ["Agent Fee", c.agentFee] : null,
-          canSeeField(role, "transportCommission")
-            ? ["Transport Commission", c.transportCommission]
-            : null,
           canSeeField(role, "return") ? ["Return", c.return] : null,
         ].filter(Boolean);
 
@@ -1217,7 +1183,7 @@ function buildSelectedContainersPdf(rows, role) {
       .fillColor("#667085")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
         36,
         y,
         { width: pageW - 72, align: "center" }
@@ -1245,7 +1211,7 @@ exports.exportSelectedContainersPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Brothers-Containers.pdf",
+      "RG-Business-transport-Containers.pdf",
       "application/pdf"
     );
   } catch (error) {
