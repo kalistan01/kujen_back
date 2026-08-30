@@ -5,6 +5,7 @@ const {
   ActivityLog,
 } = require("../../models");
 const User = require("../../models/user.model");
+const { can } = require("../../middleware/rbac");
 
 exports.getCounts = async (req, res) => {
   try {
@@ -54,7 +55,7 @@ exports.getCounts = async (req, res) => {
         activeAssignment,
         completedAssignment,
       },
-      recentActivity,
+      recentActivity: can(req.authRole, 10) ? recentActivity : [],
       recentAssignments: recentAssignments.map((item) => ({
         _id: item._id,
         blNo: item.blNo,

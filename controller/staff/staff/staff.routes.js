@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.route("/user-register").post(adminsignUp);
 router.route("/user-login").post(adminlogIn);
-router.route("/user-reset").patch(adminReset);
+router.route("/user-reset").patch(checkToken, loadAuthRole, requireCan(2), adminReset);
 router.route('/')
     .post(checkToken, loadAuthRole, requireCan(2), createUser)
     .get(checkToken, loadAuthRole, requireAny([1, 2]), getAllUsers);

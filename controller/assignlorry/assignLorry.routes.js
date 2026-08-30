@@ -3,14 +3,15 @@ const router = express.Router();
 const assignLorryController = require("./assignLorry.controller");
 const assignmentExport = require("./assignmentExport.controller");
 const { checkToken } = require("../../middleware/token");
-const { loadAuthRole, requireCan } = require("../../middleware/rbac");
+const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac");
 
 const withRole = [checkToken, loadAuthRole];
+const viewAssignment = [...withRole, requireAny([5, 8])];
 const manageAssignment = [...withRole, requireCan(5)];
 
 router
   .post("/", ...manageAssignment, assignLorryController.createAssignLorry)
-  .get("/", ...withRole, assignLorryController.getAllAssignLorries);
+  .get("/", ...viewAssignment, assignLorryController.getAllAssignLorries);
 router.get(
   "/export/pdf",
   ...withRole,
@@ -26,7 +27,7 @@ router.post(
   ...withRole,
   assignmentExport.exportSelectedContainersPdf
 );
-router.get("/next-voc", ...withRole, assignLorryController.getNextVocNo);
+router.get("/next-voc", ...viewAssignment, assignLorryController.getNextVocNo);
 router.get(
   "/:id/export/pdf",
   ...withRole,
@@ -38,7 +39,7 @@ router.get(
   assignmentExport.exportAssignmentExcel
 );
 router
-  .get("/:id", ...withRole, assignLorryController.getAssignLorryByIds)
+  .get("/:id", ...viewAssignment, assignLorryController.getAssignLorryByIds)
   .delete("/:id", ...manageAssignment, assignLorryController.deleteAssignLorry)
   .patch("/:id", ...manageAssignment, assignLorryController.updateBasicinfo);
 router.patch(

@@ -1,6 +1,26 @@
 const { LorryOwner, Lorry, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
 const { emitChange } = require("../../lib/socket");
+const { can } = require("../../middleware/rbac");
+
+function canViewFullFleet(role) {
+  return can(role, 3) || can(role, 4);
+}
+
+function slimOwnerForAssignment(owner) {
+  return {
+    _id: owner._id,
+    ownerName: owner.ownerName,
+    companyName: owner.companyName,
+    lorries: (owner.lorries || []).map((lorry) => ({
+      _id: lorry._id,
+      lorryNum: lorry.lorryNum,
+      capacity: lorry.capacity,
+      owner: lorry.owner,
+      inUse: lorry.inUse,
+    })),
+  };
+}
 
 async function findLorriesUsedInAssignments(lorryIds) {
   const ids = (lorryIds || []).filter((id) =>
@@ -71,37 +91,67 @@ exports.createLorryOwner = async (req, res) => {
   try {
     const { ownerName, phoneNum, address, companyName, lorries, createdBy } =
       req.body;
+    const actorId = req.tokenData?.userid || createdBy;
+    const lorryRows = Array.isArray(lorries) ? lorries : [];
+    const lorryNums = lorryRows
+      .map((lorry) => String(lorry?.lorryNum || "").trim())
+      .filter(Boolean);
+    const uniqueNums = new Set(lorryNums.map((num) => num.toLowerCase()));
+    if (uniqueNums.size !== lorryNums.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Each lorry number must be unique.",
+      });
+    }
+    if (lorryNums.length) {
+      const existing = await Lorry.find({
+        lorryNum: { $in: lorryNums },
+      }).select("lorryNum");
+      if (existing.length) {
+        return res.status(400).json({
+          success: false,
+          message: `Lorry number "${existing[0].lorryNum}" is already registered.`,
+        });
+      }
+    }
 
-    // Step 1: Create Owner
     const owner = new LorryOwner({
       ownerName,
       phoneNum,
       address,
       companyName,
-      createdBy,
+      createdBy: actorId,
+      updatedBy: actorId,
     });
 
     await owner.save();
 
-    // Step 2: Create all lorries linked to this owner
-    const lorryDocs = (lorries || []).map((lorry) => ({
+    const lorryDocs = lorryRows.map((lorry) => ({
       lorryNum: lorry.lorryNum,
       capacity: lorry.capacity,
-      owner: owner._id, // link to owner
+      owner: owner._id,
     }));
 
-    const createdLorries = lorryDocs.length
-      ? await Lorry.insertMany(lorryDocs)
-      : [];
+    let createdLorries = [];
+    try {
+      createdLorries = lorryDocs.length ? await Lorry.insertMany(lorryDocs) : [];
+    } catch (error) {
+      await LorryOwner.findByIdAndDelete(owner._id);
+      throw error;
+    }
 
-    syncLorryOwner(req, "created", owner._id, {
+    const data = {
       ...owner.toObject(),
-      lorries: createdLorries,
-    });
+      lorries: createdLorries.map((lorry) =>
+        typeof lorry.toObject === "function" ? lorry.toObject() : lorry
+      ),
+    };
+    syncLorryOwner(req, "created", owner._id, data);
     res.status(201).json({
       success: true,
-      owner,
-      lorries: createdLorries,
+      data,
+      owner: data,
+      lorries: data.lorries,
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
@@ -126,7 +176,10 @@ exports.getAllLorryOwners = async (req, res) => {
         ),
       };
     });
-    res.status(200).json({ success: true, data: ownersWithLorries });
+    const payload = canViewFullFleet(req.authRole)
+      ? ownersWithLorries
+      : ownersWithLorries.map(slimOwnerForAssignment);
+    res.status(200).json({ success: true, data: payload });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
   }
@@ -135,12 +188,28 @@ exports.getAllLorries = async (req, res) => {
   try {
     const allLorries = await Lorry.find().populate({
       path: "owner",
-      select: "ownerName",
+      select: canViewFullFleet(req.authRole)
+        ? "ownerName companyName phoneNum address"
+        : "ownerName companyName",
     });
+    const data = canViewFullFleet(req.authRole)
+      ? allLorries
+      : allLorries.map((lorry) => ({
+          _id: lorry._id,
+          lorryNum: lorry.lorryNum,
+          capacity: lorry.capacity,
+          owner: lorry.owner
+            ? {
+                _id: lorry.owner._id,
+                ownerName: lorry.owner.ownerName,
+                companyName: lorry.owner.companyName,
+              }
+            : lorry.owner,
+        }));
     res.status(200).json({
       success: true,
-      count: allLorries.length,
-      data: allLorries,
+      count: data.length,
+      data,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
@@ -161,7 +230,14 @@ exports.getLorryOwnerById = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Lorry owner not found" });
     }
-    res.status(200).json({ success: true, data: lorryOwner });
+    const data = canViewFullFleet(req.authRole)
+      ? lorryOwner
+      : {
+          _id: lorryOwner._id,
+          ownerName: lorryOwner.ownerName,
+          companyName: lorryOwner.companyName,
+        };
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
   }
@@ -399,11 +475,20 @@ exports.removeLorry = async (req, res) => {
         .json({ success: false, message: "Invalid Owner or Lorry ID" });
     }
 
+    const lorry = await Lorry.findOne({ _id: lorryId, owner: ownerId })
+      .select("lorryNum")
+      .lean();
+    if (!lorry) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Lorry not found" });
+    }
+
     const usedLorryIds = await findLorriesUsedInAssignments([lorryId]);
     if (usedLorryIds.length) {
       return res.status(400).json({
         success: false,
-        message: "Cannot remove this lorry because it is used in an assignment.",
+        message: `Cannot remove ${lorry.lorryNum} because it is used in an assignment.`,
       });
     }
 

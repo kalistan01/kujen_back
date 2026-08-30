@@ -1,11 +1,6 @@
 const { LorryOwner, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
 const { redactAssignment, stripDeniedFromBody } = require("../../middleware/rbac");
-const {
-  applyHeldUpToContainer,
-  applyHeldUpToContainers,
-  loadHeldUpRates,
-} = require("../../lib/heldUpCalc");
 const { emitAssignmentChange } = require("../../lib/socket");
 const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
 
@@ -91,28 +86,25 @@ async function loadAssignmentForSync(id) {
   if (!assignment) return null;
 
   const obj = assignment.toObject();
-  obj.containers = applyHeldUpToContainers(
-    (obj.containers || [])
-      .filter((container) => container && (container.containerNo || container._id))
-      .map((container) => ({
-        ...container,
-        lorryNum: container.lorryNum || container.lorryId?.lorryNum,
-        capacity: container.capacity || container.lorryId?.capacity,
-        lorryOwner:
-          container.lorryOwner ||
-          container.lorryId?.owner?.ownerName ||
-          container.lorryId?.owner?.companyName,
-        destinationlocation:
-          container.destinationlocation || container.destination?.location,
-        destinationtype:
-          container.destinationtype || container.destination?.type,
-        lorryownerphn:
-          container.lorryownerphn || container.lorryId?.owner?.phoneNum,
-        lorryownerCompany:
-          container.lorryownerCompany || container.lorryId?.owner?.companyName,
-      })),
-    await loadHeldUpRates()
-  );
+  obj.containers = (obj.containers || [])
+    .filter((container) => container && (container.containerNo || container._id))
+    .map((container) => ({
+      ...container,
+      lorryNum: container.lorryNum || container.lorryId?.lorryNum,
+      capacity: container.capacity || container.lorryId?.capacity,
+      lorryOwner:
+        container.lorryOwner ||
+        container.lorryId?.owner?.ownerName ||
+        container.lorryId?.owner?.companyName,
+      destinationlocation:
+        container.destinationlocation || container.destination?.location,
+      destinationtype:
+        container.destinationtype || container.destination?.type,
+      lorryownerphn:
+        container.lorryownerphn || container.lorryId?.owner?.phoneNum,
+      lorryownerCompany:
+        container.lorryownerCompany || container.lorryId?.owner?.companyName,
+    }));
 
   const statusCount = obj.containers.reduce(
     (acc, container) => {
@@ -182,18 +174,13 @@ exports.createAssignLorry = async (req, res) => {
     };
     if (assignmentData.containers && Array.isArray(assignmentData.containers)) {
       const vocNos = await nextVocNumbers(assignmentData.containers.length);
-      const rates = await loadHeldUpRates();
       const nextContainers = [];
       for (let index = 0; index < assignmentData.containers.length; index += 1) {
-        const withHeldUp = applyAdvancedDate(
-          applyHeldUpToContainer(
-            assignmentData.containers[index],
-            rates
-          )
-        );
-        delete withHeldUp.heldUpExtraDays;
-        delete withHeldUp.heldUpRate;
-        const applied = applyFclToContainer(withHeldUp);
+        const dated = applyAdvancedDate(assignmentData.containers[index]);
+        delete dated.heldUpExtraDays;
+        delete dated.heldUpRate;
+        dated.heldUp = Number(dated.heldUp) || 0;
+        const applied = applyFclToContainer(dated);
         if (applied.error) {
           return res.status(400).json({
             success: false,
@@ -201,10 +188,10 @@ exports.createAssignLorry = async (req, res) => {
           });
         }
         nextContainers.push({
-          ...withHeldUp,
+          ...dated,
           fcl: applied.fcl,
           vocNo: vocNos[index],
-          destination: withHeldUp.destination || undefined,
+          destination: dated.destination || undefined,
           createdBy: userid,
           updatedBy: userid,
           createdAt: new Date(),
@@ -302,7 +289,7 @@ exports.getAssignLorryById = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid ID format.",
+        message: "Invalid Assignment ID format.",
       });
     }
     const assignment = await AssignLorry.findById(id)
@@ -341,11 +328,6 @@ exports.getAssignLorryById = async (req, res) => {
       ...assignment.toObject(),
       status: overallStatus,
     };
-    const rates = await loadHeldUpRates();
-    assignmentWithStatus.containers = applyHeldUpToContainers(
-      assignmentWithStatus.containers,
-      rates
-    );
     res.status(200).json({
       success: true,
       data: assignmentWithStatus,
@@ -363,7 +345,7 @@ exports.getAssignLorryByIds = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid ID format.",
+        message: "Invalid Assignment ID format.",
       });
     }
     const assignment = await AssignLorry.aggregate([
@@ -635,11 +617,8 @@ exports.getAssignLorryByIds = async (req, res) => {
         message: "Assignment not found.",
       });
     }
-    newassignment.containers = applyHeldUpToContainers(
-      (newassignment.containers || []).filter(
-        (c) => c && (c.containerNo || c._id)
-      ),
-      await loadHeldUpRates()
+    newassignment.containers = (newassignment.containers || []).filter(
+      (c) => c && (c.containerNo || c._id)
     );
 
     const statusCount = newassignment.containers.reduce(
@@ -685,7 +664,7 @@ exports.deleteAssignLorry = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid ID format.",
+        message: "Invalid Assignment ID format.",
       });
     }
 
@@ -717,7 +696,7 @@ exports.updateBasicinfo = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid ID format.",
+        message: "Invalid Assignment ID format.",
       });
     }
 
@@ -769,16 +748,12 @@ exports.addContainer = async (req, res) => {
     }
     const [vocNo] = await nextVocNumbers(1);
     newContainer.vocNo = vocNo;
-    const withHeldUp = applyAdvancedDate(
-      applyHeldUpToContainer(
-        newContainer,
-        await loadHeldUpRates()
-      )
-    );
-    delete withHeldUp.heldUpExtraDays;
-    delete withHeldUp.heldUpRate;
-    Object.assign(newContainer, withHeldUp);
-    if (!withHeldUp.advancedDate) delete newContainer.advancedDate;
+    const dated = applyAdvancedDate(newContainer);
+    delete dated.heldUpExtraDays;
+    delete dated.heldUpRate;
+    dated.heldUp = Number(dated.heldUp) || 0;
+    Object.assign(newContainer, dated);
+    if (!dated.advancedDate) delete newContainer.advancedDate;
     newContainer.fcl = emptyFcl();
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -913,20 +888,6 @@ exports.updateContainerDetails = async (req, res) => {
     });
     const existing = existingAssignment?.containers?.id(containerId);
     if (existing) {
-      const existingObj = existing.toObject ? existing.toObject() : existing;
-      const withHeldUp = applyHeldUpToContainer(
-        {
-          ...existingObj,
-          ...body,
-          loadingDate: body.loadingDate ?? existing.loadingDate,
-          demoundDate: body.demoundDate ?? existing.demoundDate,
-          status: body.status ?? existing.status,
-          advanced: body.advanced ?? existing.advanced,
-          balancePaid: body.balancePaid ?? existing.balancePaid,
-        },
-        await loadHeldUpRates()
-      );
-      $set["containers.$.heldUp"] = withHeldUp.heldUp;
       const dated = applyAdvancedDate({
         advanced: body.advanced ?? existing.advanced,
         advancedDate:
@@ -1004,8 +965,7 @@ exports.payContainerBalance = async (req, res) => {
         .json({ success: false, message: "Container does not exist." });
     }
 
-    const rates = await loadHeldUpRates();
-    const charged = applyHeldUpToContainer(container, rates);
+    const charged = container.toObject ? container.toObject() : container;
     const chargeKeys = [
       "weight",
       "dayHire",
@@ -1034,7 +994,6 @@ exports.payContainerBalance = async (req, res) => {
       { _id: id, "containers._id": containerId },
       {
         $set: {
-          "containers.$.heldUp": charged.heldUp,
           "containers.$.balancePaid":
             Number(container.balancePaid || 0) + remaining,
           "containers.$.balanceDate": balanceDate,
@@ -1066,10 +1025,9 @@ const hireChargeKeys = [
   "heldUp",
   "return",
 ];
-const remainingHire = (container, rates) => {
-  const charged = applyHeldUpToContainer(container, rates);
+const remainingHire = (container) => {
   const total = hireChargeKeys.reduce(
-    (sum, key) => sum + Number(charged[key] || 0),
+    (sum, key) => sum + Number(container[key] || 0),
     0
   );
   return (
@@ -1106,15 +1064,13 @@ exports.payContainersBalance = async (req, res) => {
         .json({ success: false, message: "Assignment not found." });
     }
 
-    const rates = await loadHeldUpRates();
     let paidCount = 0;
     containerIds.forEach((containerId) => {
       if (!mongoose.Types.ObjectId.isValid(containerId)) return;
       const container = assignment.containers.id(containerId);
       if (!container) return;
-      const remaining = remainingHire(container, rates);
+      const remaining = remainingHire(container);
       if (remaining <= 0) return;
-      container.heldUp = applyHeldUpToContainer(container, rates).heldUp;
       container.balancePaid = Number(container.balancePaid || 0) + remaining;
       container.balanceDate = balanceDate;
       container.updatedBy = userid;

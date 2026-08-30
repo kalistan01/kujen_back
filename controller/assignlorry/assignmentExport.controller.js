@@ -3,10 +3,6 @@ const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
 const { canSeeField } = require("../../middleware/rbac");
-const {
-  applyHeldUpToContainers,
-  loadHeldUpRates,
-} = require("../../lib/heldUpCalc");
 const { formatFclRecord } = require("../../lib/fcl");
 
 const CHARGE_FIELDS = [
@@ -81,7 +77,7 @@ const containerTotal = (c = {}, role) =>
   visibleCharges(role).reduce((sum, [key]) => sum + toAmount(c[key]), 0);
 
 const fileBase = (assignment) =>
-  `RG-Business-transport-BL-${assignment?.blNo || "assignment"}`.replace(
+  `RG-Brothers-BL-${assignment?.blNo || "assignment"}`.replace(
     /[\\/:*?"<>|]/g,
     "-"
   );
@@ -152,11 +148,9 @@ async function loadAssignment(id) {
     .lean();
   if (!assignment) return null;
 
-  const rates = await loadHeldUpRates();
-  const containers = applyHeldUpToContainers(
-    (assignment.containers || []).filter((c) => c && (c.containerNo || c._id)),
-    rates
-  ).map((c) => ({
+  const containers = (assignment.containers || [])
+    .filter((c) => c && (c.containerNo || c._id))
+    .map((c) => ({
     ...c,
     lorryNum: c.lorryNum || c.lorryId?.lorryNum,
     capacity: c.capacity || c.lorryId?.capacity,
@@ -191,7 +185,7 @@ function sendFile(res, buffer, filename, contentType) {
 
 async function buildExcel(assignment, role) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Business transport";
+  workbook.creator = "RG Brothers Logistics";
   const sheet = workbook.addWorksheet("Assignment");
 
   sheet.columns = [
@@ -366,8 +360,8 @@ function buildPdf(assignment, role) {
       width: 36,
       align: "center",
     });
-    doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
-    doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 82, 50);
+    doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 82, 28);
+    doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
     doc.fillColor("#FFFFFF").fontSize(8).text("BILL OF LADING", 0, 26, {
       align: "right",
       width: pageW - 36,
@@ -555,7 +549,7 @@ function buildPdf(assignment, role) {
       y = 40;
     }
     doc.fillColor("#667085").fontSize(8).text(
-      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
       36,
       y,
       { width: pageW - 72, align: "center" }
@@ -678,7 +672,7 @@ async function loadAssignments(query = {}) {
 
 async function buildListExcel(assignments) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Business transport";
+  workbook.creator = "RG Brothers Logistics";
   const sheet = workbook.addWorksheet("Assignments");
 
   sheet.columns = [
@@ -755,8 +749,8 @@ function buildListPdf(assignments, query = {}) {
         width: 34,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 80, 22);
-      doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 80, 44);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 80, 22);
+      doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 80, 44);
       doc.fillColor("#FFFFFF").fontSize(8).text("ASSIGNMENTS", 0, 22, {
         align: "right",
         width: pageW - 36,
@@ -839,7 +833,7 @@ function buildListPdf(assignments, query = {}) {
       .font("Helvetica")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
         36,
         pageH - 28,
         { width: pageW - 72, align: "center" }
@@ -856,7 +850,7 @@ exports.exportAssignmentsExcel = async (req, res) => {
     return sendFile(
       res,
       Buffer.from(buffer),
-      "RG-Business-transport-Assignments.xlsx",
+      "RG-Brothers-Assignments.xlsx",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
   } catch (error) {
@@ -875,7 +869,7 @@ exports.exportAssignmentsPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Business-transport-Assignments.pdf",
+      "RG-Brothers-Assignments.pdf",
       "application/pdf"
     );
   } catch (error) {
@@ -931,10 +925,9 @@ async function loadSelectedContainerRows(containerIds) {
     })
     .lean();
 
-  const rates = await loadHeldUpRates();
   const byId = new Map();
   assignments.forEach((assignment) => {
-    applyHeldUpToContainers(assignment.containers || [], rates).forEach((container) => {
+    (assignment.containers || []).forEach((container) => {
       const id = String(container._id);
       if (!wanted.includes(id)) return;
       byId.set(id, {
@@ -1000,8 +993,8 @@ function buildSelectedContainersPdf(rows, role) {
         width: 36,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
-      doc.fillColor(gold).font("Helvetica").fontSize(9).text("LOGISTICS", 82, 50);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 82, 28);
+      doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
       doc.fillColor("#FFFFFF").fontSize(8).text("SELECTED CONTAINERS", 0, 26, {
         align: "right",
         width: pageW - 36,
@@ -1183,7 +1176,7 @@ function buildSelectedContainersPdf(rows, role) {
       .fillColor("#667085")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
         36,
         y,
         { width: pageW - 72, align: "center" }
@@ -1211,7 +1204,7 @@ exports.exportSelectedContainersPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Business-transport-Containers.pdf",
+      "RG-Brothers-Containers.pdf",
       "application/pdf"
     );
   } catch (error) {

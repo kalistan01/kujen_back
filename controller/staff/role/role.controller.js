@@ -1,5 +1,6 @@
 const { Role } = require("../../../models");
 const { emitChange } = require("../../../lib/socket");
+const { isActiveFlag } = require("../../../middleware/requireAdmin");
 
 function formatSaveError(error) {
   if (error?.code === 11000) {
@@ -31,6 +32,25 @@ function findRoleByName(roleName, excludeId) {
   return Role.findOne(query);
 }
 
+function roleIdFromReq(req) {
+  return String(req.body?.roleid || req.body?.roleId || req.headers.roleid || "").trim();
+}
+
+function rolePayload(role) {
+  if (!role) return null;
+  return typeof role.toObject === "function" ? role.toObject() : role;
+}
+
+function syncRole(req, action, role) {
+  const data = rolePayload(role);
+  emitChange(req, {
+    module: "role",
+    action,
+    id: data?._id,
+    data,
+  });
+}
+
 function sendError(res, status, message) {
   return res.status(status).json({
     success: false,
@@ -56,20 +76,15 @@ exports.addRole = async (req, res) => {
       roleName: name,
       permission,
       denied,
-      status,
+      status: isActiveFlag(status),
       admin,
     });
 
-    emitChange(req, {
-      module: "role",
-      action: "created",
-      id: result._id,
-      data: result,
-    });
+    syncRole(req, "created", result);
     return res.status(201).send({
       status: 0,
       success: true,
-      data: result,
+      data: rolePayload(result),
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
@@ -96,8 +111,8 @@ exports.findRole = async (req, res) => {
 
 exports.updateRole = async (req, res) => {
   try {
-    const { roleName, permission, denied, admin } = req.body;
-    const { roleid } = req.headers;
+    const { roleName, permission, denied, admin, status } = req.body;
+    const roleid = roleIdFromReq(req);
     const name = String(roleName || "").trim();
 
     if (!roleid) {
@@ -112,30 +127,29 @@ exports.updateRole = async (req, res) => {
       return sendError(res, 400, `Role name "${name}" already exists.`);
     }
 
-    const result = await Role.findByIdAndUpdate(
-      roleid,
-      {
-        roleName: name,
-        permission,
-        denied,
-        admin,
-      },
-      { new: true, runValidators: true }
-    );
+    const update = {
+      roleName: name,
+      permission,
+      denied,
+      admin,
+    };
+    if (status !== undefined) {
+      update.status = isActiveFlag(status);
+    }
+
+    const result = await Role.findByIdAndUpdate(roleid, update, {
+      new: true,
+      runValidators: true,
+    });
 
     if (!result) {
       return sendError(res, 404, "Role not found.");
     }
 
-    emitChange(req, {
-      module: "role",
-      action: "updated",
-      id: result._id,
-      data: result,
-    });
+    syncRole(req, "updated", result);
     return res.status(200).send({
       success: true,
-      data: result,
+      data: rolePayload(result),
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.code === 11000) {
@@ -147,7 +161,7 @@ exports.updateRole = async (req, res) => {
 
 exports.findRoleId = async (req, res) => {
   try {
-    const { roleid } = req.headers;
+    const roleid = roleIdFromReq(req);
     if (!roleid) {
       return sendError(res, 400, "Role ID is required.");
     }
@@ -159,7 +173,7 @@ exports.findRoleId = async (req, res) => {
 
     return res.status(200).send({
       success: true,
-      data: result,
+      data: rolePayload(result),
     });
   } catch (error) {
     return sendError(res, 500, "Could not load this role. Please try again.");
@@ -168,7 +182,7 @@ exports.findRoleId = async (req, res) => {
 
 exports.deactivateRole = async (req, res) => {
   try {
-    const { roleid } = req.headers;
+    const roleid = roleIdFromReq(req);
     if (!roleid) {
       return sendError(res, 400, "Role ID is required.");
     }
@@ -183,15 +197,10 @@ exports.deactivateRole = async (req, res) => {
       return sendError(res, 404, "Role not found.");
     }
 
-    emitChange(req, {
-      module: "role",
-      action: "updated",
-      id: result._id,
-      data: result,
-    });
+    syncRole(req, "updated", result);
     return res.status(200).send({
       success: true,
-      data: result,
+      data: rolePayload(result),
     });
   } catch (error) {
     return sendError(
@@ -204,7 +213,7 @@ exports.deactivateRole = async (req, res) => {
 
 exports.activateRole = async (req, res) => {
   try {
-    const { roleid } = req.headers;
+    const roleid = roleIdFromReq(req);
     if (!roleid) {
       return sendError(res, 400, "Role ID is required.");
     }
@@ -219,15 +228,10 @@ exports.activateRole = async (req, res) => {
       return sendError(res, 404, "Role not found.");
     }
 
-    emitChange(req, {
-      module: "role",
-      action: "updated",
-      id: result._id,
-      data: result,
-    });
+    syncRole(req, "updated", result);
     return res.status(200).send({
       success: true,
-      data: result,
+      data: rolePayload(result),
     });
   } catch (error) {
     return sendError(

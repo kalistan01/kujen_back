@@ -9,6 +9,7 @@ router.get(
   "/assignment/:id",
   checkToken,
   loadAuthRole,
+  requireCan(10),
   getAssignmentLogs
 );
 

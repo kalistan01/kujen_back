@@ -1,6 +1,6 @@
 const { createToken } = require("../../../middleware/token");
 const { User, Role } = require("../../../models");
-const { publicUser, accessDeniedMessage } = require("../../../middleware/requireAdmin");
+const { publicUser, accessDeniedMessage, isActiveFlag } = require("../../../middleware/requireAdmin");
 const { authCookie } = require("../../../config/cookie");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
@@ -10,6 +10,13 @@ const { upsertLoginDevice } = require("../../../lib/device");
 exports.adminsignUp = async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
+    const existingUsers = await User.countDocuments();
+    if (existingUsers > 0) {
+      return res.status(403).json({
+        message: "Admin registration is disabled after the first admin.",
+        success: false,
+      });
+    }
     const user = await User.findOne({ email: email });
     if (user) {
       return res.status(200).json({
@@ -116,6 +123,12 @@ exports.adminlogIn = async (req, res) => {
 exports.adminReset = async (req, res) => {
   try {
     const { email, password } = req.body;
+    if (!password || String(password).length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters.",
+        success: false,
+      });
+    }
     const admin = await User.findOne({ email });
     if (!admin) {
       return res.status(404).json({
@@ -180,13 +193,14 @@ function sendError(res, status, message) {
 async function userForSync(userId, io) {
   const user = await User.findById(userId)
     .select("-password")
-    .populate("roleId", "roleName");
+    .populate("roleId", "roleName status");
   if (!user) return null;
   const obj = user.toObject();
   return {
     ...obj,
     id: String(obj._id),
     roleName: obj.roleId?.roleName || "",
+    roleStatus: obj.roleId?.status !== false,
     roleId: obj.roleId?._id || obj.roleId,
     online: onlineUserIds(io).has(String(obj._id)),
   };
@@ -202,7 +216,7 @@ function syncUser(req, action, id, data) {
 }
 
 exports.createUser = async (req, res) => {
-  const { fullName, email, password, roleId } = req.body;
+  const { fullName, email, password, roleId, status } = req.body;
   try {
     const name = String(fullName || "").trim();
     const mail = String(email || "").trim().toLowerCase();
@@ -243,6 +257,7 @@ exports.createUser = async (req, res) => {
       email: mail,
       password: hashedPassword,
       roleId,
+      status: isActiveFlag(status),
     });
 
     const userResponse = await userForSync(user._id, req.app.get("io"));
@@ -286,6 +301,7 @@ exports.getAllUsers = async (req, res) => {
         $addFields: {
           roleName: "$role.roleName",
           roleId: "$role._id",
+          roleStatus: { $ne: ["$role.status", false] },
         },
       },
       { $sort: { createdAt: -1 } },
@@ -296,6 +312,7 @@ exports.getAllUsers = async (req, res) => {
           status: 1,
           roleId: 1,
           roleName: 1,
+          roleStatus: 1,
           createdAt: 1,
           updatedAt: 1,
           lastSeen: 1,
