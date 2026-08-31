@@ -119,7 +119,7 @@ async function loadAssignmentForSync(id) {
       acc[status] += 1;
       return acc;
     },
-    { "in-progress": 0, completed: 0, pending: 0 }
+    { "in-progress": 0, completed: 0, pending: 0, advanced: 0 }
   );
   const allCompleted =
     obj.containers.length > 0 &&
@@ -638,7 +638,7 @@ exports.getAssignLorryByIds = async (req, res) => {
         acc[status]++;
         return acc;
       },
-      { "in-progress": 0, completed: 0, pending: 0 }
+      { "in-progress": 0, completed: 0, pending: 0, advanced: 0 }
     );
 
     // Determine overall status

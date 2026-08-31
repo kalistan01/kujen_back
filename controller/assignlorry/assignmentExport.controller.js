@@ -215,7 +215,7 @@ function sendFile(res, buffer, filename, contentType) {
 
 async function buildExcel(assignment, role) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Brothers Logistics";
+  workbook.creator = "RG Business transport";
   const sheet = workbook.addWorksheet("Assignment");
 
   sheet.columns = [
@@ -402,7 +402,7 @@ function buildPdf(assignment, role) {
       width: 36,
       align: "center",
     });
-    doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 82, 28);
+    doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
     doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
     doc.fillColor("#FFFFFF").fontSize(8).text("BILL OF LADING", 0, 26, {
       align: "right",
@@ -573,7 +573,7 @@ function buildPdf(assignment, role) {
       y = 40;
     }
     doc.fillColor("#667085").fontSize(8).text(
-      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
       36,
       y,
       { width: pageW - 72, align: "center" }
@@ -696,7 +696,7 @@ async function loadAssignments(query = {}) {
 
 async function buildListExcel(assignments) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Brothers Logistics";
+  workbook.creator = "RG Business transport";
   const sheet = workbook.addWorksheet("Assignments");
 
   sheet.columns = [
@@ -773,7 +773,7 @@ function buildListPdf(assignments, query = {}) {
         width: 34,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 80, 22);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 80, 22);
       doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 80, 44);
       doc.fillColor("#FFFFFF").fontSize(8).text("ASSIGNMENTS", 0, 22, {
         align: "right",
@@ -857,7 +857,7 @@ function buildListPdf(assignments, query = {}) {
       .font("Helvetica")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
         36,
         pageH - 28,
         { width: pageW - 72, align: "center" }
@@ -1017,7 +1017,7 @@ function buildSelectedContainersPdf(rows, role) {
         width: 36,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Brothers Logistics", 82, 28);
+      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
       doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
       doc.fillColor("#FFFFFF").fontSize(8).text("SELECTED CONTAINERS", 0, 26, {
         align: "right",
@@ -1224,7 +1224,7 @@ function buildSelectedContainersPdf(rows, role) {
       .fillColor("#667085")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Brothers Logistics`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
         36,
         y,
         { width: pageW - 72, align: "center" }

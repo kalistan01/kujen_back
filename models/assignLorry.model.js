@@ -39,7 +39,7 @@ const assignLorrySchema = new mongoose.Schema(
       {
         status: {
           type: String,
-          enum: ["in-progress", "completed", "pending"],
+          enum: ["in-progress", "completed", "pending", "advanced"],
           default: "pending",
         },
         containerNo: {

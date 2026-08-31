@@ -25,7 +25,7 @@ exports.getCounts = async (req, res) => {
       AssignLorry.countDocuments({
         containers: {
           $elemMatch: {
-            status: { $in: ["in-progress", "pending"] },
+            status: { $in: ["in-progress", "pending", "advanced"] },
           },
         },
       }),
