@@ -31,7 +31,7 @@ const FIELD_EDIT_BY_ID = {
   51: "return",
 };
 
-const MUST_GRANT = new Set([1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15]);
+const MUST_GRANT = new Set([1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16]);
 
 function toIdList(value) {
   return (Array.isArray(value) ? value : [])
@@ -46,7 +46,7 @@ function can(role, id) {
   const permission = toIdList(role.permission);
   if (denied.includes(id)) return false;
   if (permission.includes(id)) return true;
-  const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9 };
+  const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9, 16: 5 };
   const addId = legacyEdit[id];
   if (addId && permission.includes(addId) && !denied.includes(id)) return true;
   return !MUST_GRANT.has(id);

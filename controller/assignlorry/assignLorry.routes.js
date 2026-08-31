@@ -6,11 +6,12 @@ const { checkToken } = require("../../middleware/token");
 const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac");
 
 const withRole = [checkToken, loadAuthRole];
-const viewAssignment = [...withRole, requireAny([5, 8])];
-const manageAssignment = [...withRole, requireCan(5)];
+const viewAssignment = [...withRole, requireAny([5, 8, 16])];
+const addAssignment = [...withRole, requireCan(5)];
+const editAssignment = [...withRole, requireCan(16)];
 
 router
-  .post("/", ...manageAssignment, assignLorryController.createAssignLorry)
+  .post("/", ...addAssignment, assignLorryController.createAssignLorry)
   .get("/", ...viewAssignment, assignLorryController.getAllAssignLorries);
 router.get(
   "/export/pdf",
@@ -40,29 +41,29 @@ router.get(
 );
 router
   .get("/:id", ...viewAssignment, assignLorryController.getAssignLorryByIds)
-  .delete("/:id", ...manageAssignment, assignLorryController.deleteAssignLorry)
-  .patch("/:id", ...manageAssignment, assignLorryController.updateBasicinfo);
+  .delete("/:id", ...editAssignment, assignLorryController.deleteAssignLorry)
+  .patch("/:id", ...editAssignment, assignLorryController.updateBasicinfo);
 router.patch(
   "/:id/pay-balances",
-  ...manageAssignment,
+  ...editAssignment,
   assignLorryController.payContainersBalance
 );
-router.post("/:id/containers", ...manageAssignment, assignLorryController.addContainer);
+router.post("/:id/containers", ...editAssignment, assignLorryController.addContainer);
 router
-  .delete("/:id/containers/:containerId", ...manageAssignment, assignLorryController.removeContainer)
+  .delete("/:id/containers/:containerId", ...editAssignment, assignLorryController.removeContainer)
   .patch(
     "/:id/containers/:containerId",
-    ...manageAssignment,
+    ...editAssignment,
     assignLorryController.updatedContainerStatus
   )
   .patch(
     "/:id/containers/:containerId/balance",
-    ...manageAssignment,
+    ...editAssignment,
     assignLorryController.payContainerBalance
   )
   .put(
     "/:id/containers/:containerId",
-    ...manageAssignment,
+    ...editAssignment,
     assignLorryController.updateContainerDetails
   );
 
