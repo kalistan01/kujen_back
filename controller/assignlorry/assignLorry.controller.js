@@ -193,6 +193,7 @@ exports.createAssignLorry = async (req, res) => {
             message: applied.error,
           });
         }
+        if (!dated.demoundDate) delete dated.demoundDate;
         nextContainers.push({
           ...dated,
           fcl: applied.fcl,
@@ -786,6 +787,9 @@ exports.addContainer = async (req, res) => {
     if (!newContainer.destination) {
       delete newContainer.destination;
     }
+    if (!newContainer.demoundDate) {
+      delete newContainer.demoundDate;
+    }
     const [vocNo] = await nextVocNumbers(1);
     newContainer.vocNo = vocNo;
     const dated = applyAdvancedDate(newContainer);
@@ -894,6 +898,7 @@ exports.updateContainerDetails = async (req, res) => {
       "transportCommission",
       "status",
       "return",
+      "note",
     ];
     const { userid } = req.tokenData;
 
@@ -915,6 +920,10 @@ exports.updateContainerDetails = async (req, res) => {
       if (body[key] !== undefined) {
         if (key === "destination" && !body[key]) return;
         if (key === "advancedDate") return;
+        if (key === "demoundDate" && !body[key]) {
+          $unset["containers.$.demoundDate"] = 1;
+          return;
+        }
         $set[`containers.$.${key}`] = body[key];
       }
     });

@@ -63,7 +63,6 @@ const assignLorrySchema = new mongoose.Schema(
         },
         demoundDate: {
           type: Date,
-          required: [true, "Demount date is required."],
         },
         destination: {
           type: mongoose.Schema.Types.ObjectId,
@@ -110,6 +109,11 @@ const assignLorrySchema = new mongoose.Schema(
         },
         return: {
           type: Number,
+        },
+        note: {
+          type: String,
+          trim: true,
+          default: "",
         },
 
         fcl: {
