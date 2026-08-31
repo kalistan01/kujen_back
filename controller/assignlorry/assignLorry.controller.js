@@ -1,8 +1,14 @@
-const { LorryOwner, AssignLorry } = require("../../models");
+const { LorryOwner, AssignLorry, User } = require("../../models");
 const mongoose = require("mongoose");
-const { redactAssignment, stripDeniedFromBody } = require("../../middleware/rbac");
+const bcrypt = require("bcrypt");
+const {
+  redactAssignment,
+  stripDeniedFromBody,
+  canEditField,
+} = require("../../middleware/rbac");
 const { emitAssignmentChange } = require("../../lib/socket");
 const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
+const { isAdminRole, isActiveFlag } = require("../../middleware/requireAdmin");
 
 function formatSaveError(error) {
   if (error?.name === "ValidationError") {
@@ -661,11 +667,45 @@ exports.getAssignLorryByIds = async (req, res) => {
 exports.deleteAssignLorry = async (req, res) => {
   try {
     const { id } = req.params;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = req.body?.password;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Admin email and password are required.",
+      });
+    }
+
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
         message: "Invalid Assignment ID format.",
       });
+    }
+
+    const invalidAdmin = () =>
+      res.status(403).json({
+        success: false,
+        message: "Invalid admin credentials.",
+      });
+
+    const adminUser = await User.findOne({ email })
+      .select("+password")
+      .populate("roleId", "roleName admin permission denied status");
+
+    if (!adminUser) return invalidAdmin();
+
+    const passwordMatch = await bcrypt.compare(password, adminUser.password);
+    if (!passwordMatch) return invalidAdmin();
+    if (!isActiveFlag(adminUser.status)) return invalidAdmin();
+
+    const role =
+      adminUser.roleId && typeof adminUser.roleId === "object"
+        ? adminUser.roleId
+        : null;
+    if (!role || !isActiveFlag(role.status) || !isAdminRole(role)) {
+      return invalidAdmin();
     }
 
     const deletedAssignment = await AssignLorry.findByIdAndDelete(id);
@@ -938,6 +978,12 @@ exports.updateContainerDetails = async (req, res) => {
 };
 exports.payContainerBalance = async (req, res) => {
   try {
+    if (!canEditField(req.authRole, "balancePaid")) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to pay container balances.",
+      });
+    }
     const { id, containerId } = req.params;
     const { userid } = req.tokenData;
     const balanceDate = req.body.balanceDate || new Date();
@@ -1038,6 +1084,12 @@ const remainingHire = (container) => {
 };
 exports.payContainersBalance = async (req, res) => {
   try {
+    if (!canEditField(req.authRole, "balancePaid")) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to pay container balances.",
+      });
+    }
     const { id } = req.params;
     const { userid } = req.tokenData;
     const containerIds = Array.isArray(req.body.containerIds)

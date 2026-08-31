@@ -16,7 +16,22 @@ const FIELD_BY_ID = {
   31: "return",
 };
 
-const MUST_GRANT = new Set([1, 2, 4, 5, 7, 9, 10]);
+const FIELD_EDIT_BY_ID = {
+  40: "weight",
+  41: "dayHire",
+  42: "advanced",
+  43: "advancedDate",
+  44: "balancePaid",
+  45: "balanceDate",
+  46: "outHire",
+  47: "other",
+  48: "heldUp",
+  49: "agentFee",
+  50: "transportCommission",
+  51: "return",
+};
+
+const MUST_GRANT = new Set([1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15]);
 
 function toIdList(value) {
   return (Array.isArray(value) ? value : [])
@@ -31,6 +46,9 @@ function can(role, id) {
   const permission = toIdList(role.permission);
   if (denied.includes(id)) return false;
   if (permission.includes(id)) return true;
+  const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9 };
+  const addId = legacyEdit[id];
+  if (addId && permission.includes(addId) && !denied.includes(id)) return true;
   return !MUST_GRANT.has(id);
 }
 
@@ -43,11 +61,32 @@ function canSeeField(role, key) {
   return can(role, Number(entry[0]));
 }
 
+function canEditField(role, key) {
+  if (
+    key === "totals" ||
+    key === "total" ||
+    key === "paid" ||
+    key === "remaining"
+  ) {
+    return false;
+  }
+  if (!canSeeField(role, key)) return false;
+  const entry = Object.entries(FIELD_EDIT_BY_ID).find(([, field]) => field === key);
+  if (!entry) return true;
+  return can(role, Number(entry[0]));
+}
+
 function deniedFieldKeys(role) {
   if (!role || isAdminRole(role)) return [];
-  const denied = new Set(toIdList(role.denied));
   return Object.entries(FIELD_BY_ID)
-    .filter(([id]) => denied.has(Number(id)))
+    .filter(([, key]) => !canSeeField(role, key))
+    .map(([, key]) => key);
+}
+
+function uneditableFieldKeys(role) {
+  if (!role || isAdminRole(role)) return [];
+  return Object.entries(FIELD_BY_ID)
+    .filter(([, key]) => !canEditField(role, key))
     .map(([, key]) => key);
 }
 
@@ -75,7 +114,7 @@ function redactAssignment(assignment, role) {
 
 function stripDeniedFromBody(body, role) {
   if (!body || typeof body !== "object" || isAdminRole(role)) return body;
-  const keys = deniedFieldKeys(role);
+  const keys = uneditableFieldKeys(role);
   if (!keys.length) return body;
   const copy = { ...body };
   keys.forEach((key) => {
@@ -145,11 +184,14 @@ function requireAny(ids) {
 module.exports = {
   can,
   canSeeField,
+  canEditField,
   deniedFieldKeys,
+  uneditableFieldKeys,
   redactAssignment,
   stripDeniedFromBody,
   loadAuthRole,
   requireCan,
   requireAny,
   FIELD_BY_ID,
+  FIELD_EDIT_BY_ID,
 };

@@ -98,6 +98,36 @@ const containerPaid = (c = {}, role) =>
   (canSeeField(role, "advanced") ? toAmount(c.advanced) : 0) +
   (canSeeField(role, "balancePaid") ? toAmount(c.balancePaid) : 0);
 
+const containerChargeRows = (c = {}, role, formatAdvDate = formatDate) =>
+  [
+    canSeeField(role, "weight") ? ["Weight", c.weight] : null,
+    canSeeField(role, "dayHire") ? ["Day Hire", c.dayHire] : null,
+    canSeeField(role, "advanced")
+      ? [
+          c.advancedDate
+            ? `Advanced (${formatAdvDate(c.advancedDate)})`
+            : "Advanced",
+          c.advanced,
+        ]
+      : null,
+    canSeeField(role, "balancePaid")
+      ? [
+          c.balanceDate
+            ? `Balance Paid (${formatAdvDate(c.balanceDate)})`
+            : "Balance Paid",
+          c.balancePaid,
+        ]
+      : null,
+    canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
+    canSeeField(role, "other") ? ["Other", c.other] : null,
+    canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
+    canSeeField(role, "agentFee") ? ["Agent Fee", c.agentFee] : null,
+    canSeeField(role, "transportCommission")
+      ? ["Transport Commission", c.transportCommission]
+      : null,
+    canSeeField(role, "return") ? ["Return", c.return] : null,
+  ].filter(Boolean);
+
 const assignmentFinancials = (containers = [], role) => {
   const chargeFields = visibleCharges(role);
   const commissionFields = visibleCommissions(role);
@@ -233,6 +263,12 @@ async function buildExcel(assignment, role) {
     ...(canSeeField(role, "heldUp")
       ? [{ header: "Held Up", key: "heldUp", width: 12 }]
       : []),
+    ...(canSeeField(role, "agentFee")
+      ? [{ header: "Agent Fee", key: "agentFee", width: 12 }]
+      : []),
+    ...(canSeeField(role, "transportCommission")
+      ? [{ header: "Transport Commission", key: "transportCommission", width: 20 }]
+      : []),
     ...(canSeeField(role, "return")
       ? [{ header: "Return", key: "return", width: 12 }]
       : []),
@@ -253,6 +289,8 @@ async function buildExcel(assignment, role) {
     "outHire",
     "other",
     "heldUp",
+    "agentFee",
+    "transportCommission",
     "return",
     "total",
     "paid",
@@ -275,6 +313,8 @@ async function buildExcel(assignment, role) {
     outHire: 0,
     other: 0,
     heldUp: 0,
+    agentFee: 0,
+    transportCommission: 0,
     return: 0,
     total: 0,
     paid: 0,
@@ -311,6 +351,8 @@ async function buildExcel(assignment, role) {
       outHire: toAmount(c.outHire),
       other: toAmount(c.other),
       heldUp: toAmount(c.heldUp),
+      agentFee: toAmount(c.agentFee),
+      transportCommission: toAmount(c.transportCommission),
       return: toAmount(c.return),
       total,
       paid,
@@ -447,30 +489,7 @@ function buildPdf(assignment, role) {
         ["FCL Status", formatFclRecord(c.fcl)],
       ]);
 
-      const charges = [
-        canSeeField(role, "weight") ? ["Weight", c.weight] : null,
-        canSeeField(role, "dayHire") ? ["Day Hire", c.dayHire] : null,
-        canSeeField(role, "advanced")
-          ? [
-              c.advancedDate
-                ? `Advanced (${formatDate(c.advancedDate)})`
-                : "Advanced",
-              c.advanced,
-            ]
-          : null,
-        canSeeField(role, "balancePaid")
-          ? [
-              c.balanceDate
-                ? `Balance Paid (${formatDate(c.balanceDate)})`
-                : "Balance Paid",
-              c.balancePaid,
-            ]
-          : null,
-        canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
-        canSeeField(role, "other") ? ["Other", c.other] : null,
-        canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
-        canSeeField(role, "return") ? ["Return", c.return] : null,
-      ].filter(Boolean);
+      const charges = containerChargeRows(c, role);
       const tableTop = y;
       charges.forEach((row, i) => {
         const col = i % 2;
@@ -522,6 +541,11 @@ function buildPdf(assignment, role) {
             ["Remaining", money(fin.remaining), true],
           ]
         : []),
+      ...visibleCommissions(role).map(([key, label]) => [
+        label,
+        money(fin.commissions[key]),
+        false,
+      ]),
     ];
     if (y + summaryRows.length * 16 > 760) {
       doc.addPage();
@@ -1097,30 +1121,7 @@ function buildSelectedContainersPdf(rows, role) {
           ["FCL Status", formatFclRecord(c.fcl)],
         ]);
 
-        const charges = [
-          canSeeField(role, "weight") ? ["Weight", c.weight] : null,
-          canSeeField(role, "dayHire") ? ["Day Hire", c.dayHire] : null,
-          canSeeField(role, "advanced")
-            ? [
-                c.advancedDate
-                  ? `Advanced (${formatDateDmy(c.advancedDate)})`
-                  : "Advanced",
-                c.advanced,
-              ]
-            : null,
-          canSeeField(role, "balancePaid")
-            ? [
-                c.balanceDate
-                  ? `Balance Paid (${formatDateDmy(c.balanceDate)})`
-                  : "Balance Paid",
-                c.balancePaid,
-              ]
-            : null,
-          canSeeField(role, "outHire") ? ["Out Hire", c.outHire] : null,
-          canSeeField(role, "other") ? ["Other", c.other] : null,
-          canSeeField(role, "heldUp") ? ["Held Up", c.heldUp] : null,
-          canSeeField(role, "return") ? ["Return", c.return] : null,
-        ].filter(Boolean);
+        const charges = containerChargeRows(c, role, formatDateDmy);
 
         ensure(Math.ceil(charges.length / 2) * 16 + 50);
         const tableTop = y;
@@ -1170,6 +1171,53 @@ function buildSelectedContainersPdf(rows, role) {
         }
       });
     });
+
+    const allContainers = rows.map((row) => row.container);
+    const fin = assignmentFinancials(allContainers, role);
+    const summaryRows = [
+      ...visibleCharges(role).map(([key, label]) => [
+        label,
+        moneyCompact(fin.charges[key]),
+        false,
+      ]),
+      ...(canSeeField(role, "totals")
+        ? [
+            ["Total", moneyCompact(fin.total), false],
+            ...(canSeeField(role, "advanced")
+              ? [["Advanced", moneyCompact(fin.advanced), false]]
+              : []),
+            ...(canSeeField(role, "balancePaid")
+              ? [["Balance Paid", moneyCompact(fin.balancePaid), false]]
+              : []),
+            ["Remaining", moneyCompact(fin.remaining), true],
+          ]
+        : []),
+      ...visibleCommissions(role).map(([key, label]) => [
+        label,
+        moneyCompact(fin.commissions[key]),
+        false,
+      ]),
+    ];
+    if (summaryRows.length) {
+      section("Total summary");
+      ensure(summaryRows.length * 16 + 20);
+      summaryRows.forEach((row, i) => {
+        const highlight = Boolean(row[2]);
+        doc
+          .fillColor(highlight ? navy : "#667085")
+          .font(highlight ? "Helvetica-Bold" : "Helvetica")
+          .fontSize(10)
+          .text(row[0], 320, y + i * 16);
+        doc
+          .fillColor(navy)
+          .font("Helvetica-Bold")
+          .text(row[1], 400, y + i * 16, {
+            width: 160,
+            align: "right",
+          });
+      });
+      y += summaryRows.length * 16 + 16;
+    }
 
     ensure(30);
     doc
