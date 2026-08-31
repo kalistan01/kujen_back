@@ -1,8 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: "rgbrothers-api",
-      cwd: "/var/www/rgbrothers/back",
+      name: "rgbt-api",
+      cwd: "/var/www/rgbt/back",
       script: "server.js",
       instances: 1,
       autorestart: true,
