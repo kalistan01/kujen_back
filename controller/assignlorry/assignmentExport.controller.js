@@ -2,7 +2,7 @@ const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
-const { canSeeField } = require("../../middleware/rbac");
+const { canSeeField, redactAssignment } = require("../../middleware/rbac");
 const { formatFclRecord } = require("../../lib/fcl");
 
 const CHARGE_FIELDS = [
@@ -585,10 +585,11 @@ function buildPdf(assignment, role) {
 
 exports.exportAssignmentExcel = async (req, res) => {
   try {
-    const assignment = await loadAssignment(req.params.id);
-    if (!assignment) {
+    const loaded = await loadAssignment(req.params.id);
+    if (!loaded) {
       return res.status(404).json({ success: false, message: "Assignment not found." });
     }
+    const assignment = redactAssignment(loaded, req.authRole);
     const buffer = await buildExcel(assignment, req.authRole);
     return sendFile(
       res,
@@ -607,10 +608,11 @@ exports.exportAssignmentExcel = async (req, res) => {
 
 exports.exportAssignmentPdf = async (req, res) => {
   try {
-    const assignment = await loadAssignment(req.params.id);
-    if (!assignment) {
+    const loaded = await loadAssignment(req.params.id);
+    if (!loaded) {
       return res.status(404).json({ success: false, message: "Assignment not found." });
     }
+    const assignment = redactAssignment(loaded, req.authRole);
     const buffer = await buildPdf(assignment, req.authRole);
     return sendFile(
       res,
@@ -869,7 +871,9 @@ function buildListPdf(assignments, query = {}) {
 
 exports.exportAssignmentsExcel = async (req, res) => {
   try {
-    const assignments = await loadAssignments(req.query);
+    const assignments = (await loadAssignments(req.query)).map((item) =>
+      redactAssignment(item, req.authRole)
+    );
     const buffer = await buildListExcel(assignments);
     return sendFile(
       res,
@@ -888,7 +892,9 @@ exports.exportAssignmentsExcel = async (req, res) => {
 
 exports.exportAssignmentsPdf = async (req, res) => {
   try {
-    const assignments = await loadAssignments(req.query);
+    const assignments = (await loadAssignments(req.query)).map((item) =>
+      redactAssignment(item, req.authRole)
+    );
     const buffer = await buildListPdf(assignments, req.query);
     return sendFile(
       res,

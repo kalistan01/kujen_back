@@ -6,37 +6,40 @@ const { checkToken } = require("../../middleware/token");
 const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac");
 
 const withRole = [checkToken, loadAuthRole];
-const viewAssignment = [...withRole, requireAny([5, 8, 16])];
+const viewAssignment = [...withRole, requireAny([5, 8, 16, 17, 18, 19])];
 const addAssignment = [...withRole, requireCan(5)];
 const editAssignment = [...withRole, requireCan(16)];
+const addContainer = [...withRole, requireCan(18)];
+const editContainer = [...withRole, requireCan(19)];
+const viewContainers = [...withRole, requireCan(17)];
 
 router
   .post("/", ...addAssignment, assignLorryController.createAssignLorry)
   .get("/", ...viewAssignment, assignLorryController.getAllAssignLorries);
 router.get(
   "/export/pdf",
-  ...withRole,
+  ...viewAssignment,
   assignmentExport.exportAssignmentsPdf
 );
 router.get(
   "/export/excel",
-  ...withRole,
+  ...viewAssignment,
   assignmentExport.exportAssignmentsExcel
 );
 router.post(
   "/export/containers/pdf",
-  ...withRole,
+  ...viewContainers,
   assignmentExport.exportSelectedContainersPdf
 );
 router.get("/next-voc", ...viewAssignment, assignLorryController.getNextVocNo);
 router.get(
   "/:id/export/pdf",
-  ...withRole,
+  ...viewAssignment,
   assignmentExport.exportAssignmentPdf
 );
 router.get(
   "/:id/export/excel",
-  ...withRole,
+  ...viewAssignment,
   assignmentExport.exportAssignmentExcel
 );
 router
@@ -45,25 +48,25 @@ router
   .patch("/:id", ...editAssignment, assignLorryController.updateBasicinfo);
 router.patch(
   "/:id/pay-balances",
-  ...editAssignment,
+  ...editContainer,
   assignLorryController.payContainersBalance
 );
-router.post("/:id/containers", ...editAssignment, assignLorryController.addContainer);
+router.post("/:id/containers", ...addContainer, assignLorryController.addContainer);
 router
-  .delete("/:id/containers/:containerId", ...editAssignment, assignLorryController.removeContainer)
+  .delete("/:id/containers/:containerId", ...editContainer, assignLorryController.removeContainer)
   .patch(
     "/:id/containers/:containerId",
-    ...editAssignment,
+    ...editContainer,
     assignLorryController.updatedContainerStatus
   )
   .patch(
     "/:id/containers/:containerId/balance",
-    ...editAssignment,
+    ...editContainer,
     assignLorryController.payContainerBalance
   )
   .put(
     "/:id/containers/:containerId",
-    ...editAssignment,
+    ...editContainer,
     assignLorryController.updateContainerDetails
   );
 

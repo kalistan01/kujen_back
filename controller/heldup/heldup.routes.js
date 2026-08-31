@@ -10,7 +10,7 @@ const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac.
 
 const router = express.Router();
 const withRole = [checkToken, loadAuthRole];
-const viewHeldUp = [...withRole, requireAny([5, 6, 7, 8, 14, 16])];
+const viewHeldUp = [...withRole, requireAny([5, 6, 7, 8, 14, 16, 17, 18, 19])];
 const addHeldUp = [...withRole, requireCan(7)];
 
 router.route("/").post(...addHeldUp, createHeldUp).get(...viewHeldUp, getAllHeldUps);

@@ -2,6 +2,7 @@ const { LorryOwner, AssignLorry, User } = require("../../models");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
 const {
+  can,
   redactAssignment,
   stripDeniedFromBody,
   canEditField,
@@ -172,13 +173,16 @@ exports.createAssignLorry = async (req, res) => {
   try {
     const { userid } = req.tokenData;
     const assignmentData = {
-      ...stripDeniedFromBody(req.body, req.authRole),
+      ...stripDeniedFromBody(req.body, req.authRole, "add"),
       createdBy: userid,
       updatedBy: userid,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     if (assignmentData.containers && Array.isArray(assignmentData.containers)) {
+      if (!can(req.authRole, 18) && assignmentData.containers.length > 1) {
+        assignmentData.containers = assignmentData.containers.slice(0, 1);
+      }
       const vocNos = await nextVocNumbers(assignmentData.containers.length);
       const nextContainers = [];
       for (let index = 0; index < assignmentData.containers.length; index += 1) {
@@ -775,7 +779,7 @@ exports.updateBasicinfo = async (req, res) => {
 exports.addContainer = async (req, res) => {
   try {
     const { id } = req.params;
-    const newContainer = stripDeniedFromBody(req.body, req.authRole);
+    const newContainer = stripDeniedFromBody(req.body, req.authRole, "add");
     const { userid } = req.tokenData;
     newContainer.createdBy = userid;
     newContainer.updatedBy = userid;

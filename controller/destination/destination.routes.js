@@ -11,7 +11,7 @@ const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac.
 
 const router = express.Router();
 const withRole = [checkToken, loadAuthRole];
-const viewDestination = [...withRole, requireAny([5, 6, 7, 8, 14, 16])];
+const viewDestination = [...withRole, requireAny([5, 6, 7, 8, 14, 16, 17, 18, 19])];
 const addDestination = [...withRole, requireCan(7)];
 const editDestination = [...withRole, requireCan(14)];
 

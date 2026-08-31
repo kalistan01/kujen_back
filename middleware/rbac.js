@@ -31,7 +31,25 @@ const FIELD_EDIT_BY_ID = {
   51: "return",
 };
 
-const MUST_GRANT = new Set([1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16]);
+const FIELD_ADD_BY_ID = {
+  52: "weight",
+  53: "dayHire",
+  54: "advanced",
+  55: "advancedDate",
+  56: "balancePaid",
+  57: "balanceDate",
+  58: "outHire",
+  59: "other",
+  60: "heldUp",
+  61: "agentFee",
+  62: "transportCommission",
+  63: "return",
+};
+
+const MUST_GRANT = new Set([
+  1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+]);
 
 function toIdList(value) {
   return (Array.isArray(value) ? value : [])
@@ -49,6 +67,31 @@ function can(role, id) {
   const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9, 16: 5 };
   const addId = legacyEdit[id];
   if (addId && permission.includes(addId) && !denied.includes(id)) return true;
+  const legacyFromParent = {
+    17: [8, 5, 16],
+    18: [5, 16],
+    19: [16],
+  };
+  const parents = legacyFromParent[id];
+  if (parents && parents.some((parentId) => permission.includes(parentId))) {
+    return true;
+  }
+  const legacyFieldAdd = {
+    52: 40,
+    53: 41,
+    54: 42,
+    55: 43,
+    56: 44,
+    57: 45,
+    58: 46,
+    59: 47,
+    60: 48,
+    61: 49,
+    62: 50,
+    63: 51,
+  };
+  const editId = legacyFieldAdd[id];
+  if (editId && permission.includes(editId) && !denied.includes(id)) return true;
   return !MUST_GRANT.has(id);
 }
 
@@ -57,6 +100,21 @@ function canSeeField(role, key) {
     return can(role, 32);
   }
   const entry = Object.entries(FIELD_BY_ID).find(([, field]) => field === key);
+  if (!entry) return true;
+  return can(role, Number(entry[0]));
+}
+
+function canAddField(role, key) {
+  if (
+    key === "totals" ||
+    key === "total" ||
+    key === "paid" ||
+    key === "remaining"
+  ) {
+    return false;
+  }
+  if (!canSeeField(role, key)) return false;
+  const entry = Object.entries(FIELD_ADD_BY_ID).find(([, field]) => field === key);
   if (!entry) return true;
   return can(role, Number(entry[0]));
 }
@@ -90,6 +148,13 @@ function uneditableFieldKeys(role) {
     .map(([, key]) => key);
 }
 
+function unaddableFieldKeys(role) {
+  if (!role || isAdminRole(role)) return [];
+  return Object.entries(FIELD_BY_ID)
+    .filter(([, key]) => !canAddField(role, key))
+    .map(([, key]) => key);
+}
+
 function redactContainer(container, role) {
   if (!container || typeof container !== "object") return container;
   const keys = deniedFieldKeys(role);
@@ -104,6 +169,12 @@ function redactContainer(container, role) {
 function redactAssignment(assignment, role) {
   if (!assignment || isAdminRole(role)) return assignment;
   const obj = assignment.toObject ? assignment.toObject() : { ...assignment };
+  const count = Array.isArray(obj.containers) ? obj.containers.length : 0;
+  obj.containerCount = count;
+  if (!can(role, 17)) {
+    obj.containers = [];
+    return obj;
+  }
   if (Array.isArray(obj.containers)) {
     obj.containers = obj.containers.map((container) =>
       redactContainer(container, role)
@@ -112,9 +183,9 @@ function redactAssignment(assignment, role) {
   return obj;
 }
 
-function stripDeniedFromBody(body, role) {
+function stripDeniedFromBody(body, role, mode = "edit") {
   if (!body || typeof body !== "object" || isAdminRole(role)) return body;
-  const keys = uneditableFieldKeys(role);
+  const keys = mode === "add" ? unaddableFieldKeys(role) : uneditableFieldKeys(role);
   if (!keys.length) return body;
   const copy = { ...body };
   keys.forEach((key) => {
@@ -184,6 +255,7 @@ function requireAny(ids) {
 module.exports = {
   can,
   canSeeField,
+  canAddField,
   canEditField,
   deniedFieldKeys,
   uneditableFieldKeys,
@@ -193,5 +265,6 @@ module.exports = {
   requireCan,
   requireAny,
   FIELD_BY_ID,
+  FIELD_ADD_BY_ID,
   FIELD_EDIT_BY_ID,
 };
