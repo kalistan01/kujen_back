@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "sc-api",
-      cwd: "/var/www/rgbt/back",
+      cwd: "/var/www/sc/back",
       script: "server.js",
       instances: 1,
       autorestart: true,
@@ -10,6 +10,7 @@ module.exports = {
       max_memory_restart: "500M",
       env: {
         NODE_ENV: "production",
+        PORT: "5003",
       },
     },
   ],
