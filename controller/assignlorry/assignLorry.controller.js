@@ -10,6 +10,7 @@ const {
 const { emitAssignmentChange } = require("../../lib/socket");
 const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
 const { isAdminRole, isActiveFlag } = require("../../middleware/requireAdmin");
+const { vocSequenceFrom, formatVocNo } = require("../../lib/brand");
 
 function formatSaveError(error) {
   if (error?.name === "ValidationError") {
@@ -40,15 +41,6 @@ function applyAdvancedDate(container = {}) {
     delete next.advancedDate;
   }
   return next;
-}
-
-function vocSequenceFrom(value) {
-  const match = String(value || "").trim().match(/^RGB-(\d+)$/i);
-  return match ? Number(match[1]) : 0;
-}
-
-function formatVocNo(n) {
-  return `RGB-${n}`;
 }
 
 async function getMaxVocNumber() {

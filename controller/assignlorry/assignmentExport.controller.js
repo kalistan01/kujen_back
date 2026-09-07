@@ -4,6 +4,12 @@ const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
 const { canSeeField, redactAssignment } = require("../../middleware/rbac");
 const { formatFclRecord } = require("../../lib/fcl");
+const {
+  brandName,
+  brandTaglineUpper,
+  brandMark,
+  brandFile,
+} = require("../../lib/brand");
 
 const CHARGE_FIELDS = [
   ["weight", "Weight"],
@@ -77,7 +83,7 @@ const containerTotal = (c = {}, role) =>
   visibleCharges(role).reduce((sum, [key]) => sum + toAmount(c[key]), 0);
 
 const fileBase = (assignment) =>
-  `RG-Brothers-BL-${assignment?.blNo || "assignment"}`.replace(
+  brandFile(`BL-${assignment?.blNo || "assignment"}`).replace(
     /[\\/:*?"<>|]/g,
     "-"
   );
@@ -215,7 +221,7 @@ function sendFile(res, buffer, filename, contentType) {
 
 async function buildExcel(assignment, role) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Business transport";
+  workbook.creator = brandName;
   const sheet = workbook.addWorksheet("Assignment");
 
   sheet.columns = [
@@ -398,12 +404,16 @@ function buildPdf(assignment, role) {
 
     doc.rect(0, 0, pageW, 78).fill(navy);
     doc.roundedRect(36, 24, 36, 36, 6).fill("#111111");
-    doc.fillColor(navy).font("Helvetica-Bold").fontSize(11).text("RG", 36, 36, {
+    doc
+      .fillColor(navy)
+      .font("Helvetica-Bold")
+      .fontSize(brandMark.length > 2 ? 8 : 11)
+      .text(brandMark, 36, 36, {
       width: 36,
       align: "center",
     });
-    doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
-    doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
+    doc.fillColor("#FFFFFF").fontSize(18).text(brandName, 82, 28);
+    doc.fillColor(gold).font("Helvetica").fontSize(9).text(brandTaglineUpper, 82, 50);
     doc.fillColor("#FFFFFF").fontSize(8).text("BILL OF LADING", 0, 26, {
       align: "right",
       width: pageW - 36,
@@ -573,7 +583,7 @@ function buildPdf(assignment, role) {
       y = 40;
     }
     doc.fillColor("#667085").fontSize(8).text(
-      `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+      `Generated ${formatDateTime(new Date().toISOString())}  ·  ${brandName}`,
       36,
       y,
       { width: pageW - 72, align: "center" }
@@ -698,7 +708,7 @@ async function loadAssignments(query = {}) {
 
 async function buildListExcel(assignments) {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "RG Business transport";
+  workbook.creator = brandName;
   const sheet = workbook.addWorksheet("Assignments");
 
   sheet.columns = [
@@ -771,12 +781,16 @@ function buildListPdf(assignments, query = {}) {
     const drawHeader = () => {
       doc.rect(0, 0, pageW, 70).fill(navy);
       doc.roundedRect(36, 18, 34, 34, 6).fill("#111111");
-      doc.fillColor(navy).font("Helvetica-Bold").fontSize(11).text("RG", 36, 29, {
+      doc
+        .fillColor(navy)
+        .font("Helvetica-Bold")
+        .fontSize(brandMark.length > 2 ? 8 : 11)
+        .text(brandMark, 36, 29, {
         width: 34,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 80, 22);
-      doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 80, 44);
+      doc.fillColor("#FFFFFF").fontSize(18).text(brandName, 80, 22);
+      doc.fillColor(gold).font("Helvetica").fontSize(9).text(brandTaglineUpper, 80, 44);
       doc.fillColor("#FFFFFF").fontSize(8).text("ASSIGNMENTS", 0, 22, {
         align: "right",
         width: pageW - 36,
@@ -859,7 +873,7 @@ function buildListPdf(assignments, query = {}) {
       .font("Helvetica")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  ${brandName}`,
         36,
         pageH - 28,
         { width: pageW - 72, align: "center" }
@@ -878,7 +892,7 @@ exports.exportAssignmentsExcel = async (req, res) => {
     return sendFile(
       res,
       Buffer.from(buffer),
-      "RG-Brothers-Assignments.xlsx",
+      `${brandFile("Assignments")}.xlsx`,
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
   } catch (error) {
@@ -899,7 +913,7 @@ exports.exportAssignmentsPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Brothers-Assignments.pdf",
+      `${brandFile("Assignments")}.pdf`,
       "application/pdf"
     );
   } catch (error) {
@@ -1019,12 +1033,16 @@ function buildSelectedContainersPdf(rows, role) {
     const drawHero = () => {
       doc.rect(0, 0, pageW, 78).fill(navy);
       doc.roundedRect(36, 24, 36, 36, 6).fill("#111111");
-      doc.fillColor(navy).font("Helvetica-Bold").fontSize(11).text("RG", 36, 36, {
+      doc
+        .fillColor(navy)
+        .font("Helvetica-Bold")
+        .fontSize(brandMark.length > 2 ? 8 : 11)
+        .text(brandMark, 36, 36, {
         width: 36,
         align: "center",
       });
-      doc.fillColor("#FFFFFF").fontSize(18).text("RG Business transport", 82, 28);
-      doc.fillColor(gold).font("Helvetica").fontSize(9).text("SHIP LINE", 82, 50);
+      doc.fillColor("#FFFFFF").fontSize(18).text(brandName, 82, 28);
+      doc.fillColor(gold).font("Helvetica").fontSize(9).text(brandTaglineUpper, 82, 50);
       doc.fillColor("#FFFFFF").fontSize(8).text("SELECTED CONTAINERS", 0, 26, {
         align: "right",
         width: pageW - 36,
@@ -1230,7 +1248,7 @@ function buildSelectedContainersPdf(rows, role) {
       .fillColor("#667085")
       .fontSize(8)
       .text(
-        `Generated ${formatDateTime(new Date().toISOString())}  ·  RG Business transport`,
+        `Generated ${formatDateTime(new Date().toISOString())}  ·  ${brandName}`,
         36,
         y,
         { width: pageW - 72, align: "center" }
@@ -1258,7 +1276,7 @@ exports.exportSelectedContainersPdf = async (req, res) => {
     return sendFile(
       res,
       buffer,
-      "RG-Brothers-Containers.pdf",
+      `${brandFile("Containers")}.pdf`,
       "application/pdf"
     );
   } catch (error) {
