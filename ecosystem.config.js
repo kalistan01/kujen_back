@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "rgbt-api",
+      name: "sc-api",
       cwd: "/var/www/rgbt/back",
       script: "server.js",
       instances: 1,
