@@ -1055,11 +1055,14 @@ exports.payContainerBalance = async (req, res) => {
       { new: true }
     );
 
+    const populated = await loadAssignmentForSync(id);
     syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Balance paid successfully.",
-      data: updatedAssignment,
+      data: populated
+        ? redactAssignment(populated, req.authRole)
+        : updatedAssignment,
     });
   } catch (error) {
     res.status(500).json({
@@ -1145,11 +1148,14 @@ exports.payContainersBalance = async (req, res) => {
     assignment.updatedBy = userid;
     await assignment.save();
 
+    const populated = await loadAssignmentForSync(id);
     syncAssignment(req, "updated", id);
     res.status(200).json({
       success: true,
       message: "Balances paid successfully.",
-      data: assignment,
+      data: populated
+        ? redactAssignment(populated, req.authRole)
+        : assignment,
       paidCount,
     });
   } catch (error) {
