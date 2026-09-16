@@ -11,6 +11,19 @@ const roleSchema = new mongoose.Schema(
     },
     permission: { type: [Number], default: [] },
     denied: { type: [Number], default: [] },
+    restrictLorryOwners: {
+      type: Boolean,
+      default: false,
+    },
+    allowedLorryOwners: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "LorryOwner",
+        },
+      ],
+      default: [],
+    },
     status: { type: Boolean, default: true },
     admin: {
       type: Boolean,

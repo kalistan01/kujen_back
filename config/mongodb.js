@@ -6,6 +6,8 @@ const connectDatabase = async () => {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
+    const Lorry = require("../models/lorry.model");
+    await Lorry.syncIndexes();
     console.log("Database is connected");
   } catch (error) {
     console.log("Database connection failed ", error);

@@ -5,10 +5,14 @@ const {
   ActivityLog,
 } = require("../../models");
 const User = require("../../models/user.model");
-const { can } = require("../../middleware/rbac");
+const { can, allowedOwnerIdSet } = require("../../middleware/rbac");
 
 exports.getCounts = async (req, res) => {
   try {
+    const ownerIds = allowedOwnerIdSet(req.authRole);
+    const ownerQuery = ownerIds
+      ? { _id: { $in: [...ownerIds] } }
+      : {};
     const [
       lorryOwner,
       distination,
@@ -18,7 +22,7 @@ exports.getCounts = async (req, res) => {
       recentActivity,
       recentAssignments,
     ] = await Promise.all([
-      LorryOwner.countDocuments(),
+      LorryOwner.countDocuments(ownerQuery),
       Destination.countDocuments(),
       User.countDocuments(),
       AssignLorry.countDocuments(),

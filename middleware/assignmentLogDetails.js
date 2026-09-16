@@ -33,6 +33,8 @@ const CONTAINER_FIELDS = [
   ["return", "Return"],
   ["status", "Status"],
   ["fcl", "FCL status"],
+  ["tripKind", "Trip"],
+  ["sourceContainerId", "From yard container"],
 ];
 
 const MONEY_KEYS = new Set([

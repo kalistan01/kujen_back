@@ -12,6 +12,10 @@ const assignLorrySchema = new mongoose.Schema(
       required: [true, "Cusdec date is required."],
       trim: true,
     },
+    fclDueDate: {
+      type: String,
+      trim: true,
+    },
     cusdecNo: {
       type: String,
       required: [true, "Cusdec number is required."],
@@ -67,6 +71,13 @@ const assignLorrySchema = new mongoose.Schema(
         destination: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Destination",
+        },
+        sourceContainerId: {
+          type: mongoose.Schema.Types.ObjectId,
+        },
+        tripKind: {
+          type: String,
+          enum: ["yard", "onward"],
         },
         weight: {
           type: Number,

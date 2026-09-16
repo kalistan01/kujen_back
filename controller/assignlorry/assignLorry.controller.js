@@ -6,6 +6,7 @@ const {
   redactAssignment,
   stripDeniedFromBody,
   canEditField,
+  rejectDisallowedLorries,
 } = require("../../middleware/rbac");
 const { emitAssignmentChange } = require("../../lib/socket");
 const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
@@ -41,6 +42,67 @@ function applyAdvancedDate(container = {}) {
     delete next.advancedDate;
   }
   return next;
+}
+
+function containerRefId(value) {
+  if (!value) return "";
+  if (typeof value === "object") return String(value._id || value.id || "");
+  return String(value);
+}
+
+async function applyTripFromSource(assignment, newContainer) {
+  const sourceId = containerRefId(newContainer.sourceContainerId);
+  if (!sourceId) {
+    delete newContainer.sourceContainerId;
+    delete newContainer.tripKind;
+    return null;
+  }
+  if (!mongoose.Types.ObjectId.isValid(sourceId)) {
+    return "Invalid source container.";
+  }
+  const source = (assignment.containers || []).find(
+    (container) => String(container._id) === sourceId
+  );
+  if (!source) {
+    return "Source container was not found on this assignment.";
+  }
+  if (source.tripKind !== "yard") {
+    return "Mark this container as yard first, then load it to store.";
+  }
+  const alreadyOnward = (assignment.containers || []).some(
+    (container) => containerRefId(container.sourceContainerId) === sourceId
+  );
+  if (alreadyOnward) {
+    return "This container already has a store trip.";
+  }
+  newContainer.containerNo = source.containerNo;
+  newContainer.sourceContainerId = source._id;
+  newContainer.tripKind = "onward";
+  return source;
+}
+
+function completedLockMessage(role, container) {
+  if (!container || container.status !== "completed") return null;
+  if (isAdminRole(role)) return null;
+  return "Only an administrator can edit a completed container.";
+}
+
+function isFilledAmount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0;
+}
+
+function completeRequiresMessage(container = {}) {
+  const missing = [];
+  if (!isFilledAmount(container.weight)) missing.push("weight");
+  if (!isFilledAmount(container.dayHire)) missing.push("day hire");
+  if (!isFilledAmount(container.advanced)) missing.push("advanced");
+  if (!missing.length) return null;
+  if (missing.length === 1) {
+    return `Fill ${missing[0]} before completing this container.`;
+  }
+  const last = missing.pop();
+  return `Fill ${missing.join(", ")} and ${last} before completing this container.`;
 }
 
 async function getMaxVocNumber() {
@@ -172,6 +234,13 @@ exports.createAssignLorry = async (req, res) => {
       updatedAt: new Date(),
     };
     if (assignmentData.containers && Array.isArray(assignmentData.containers)) {
+      const blocked = await rejectDisallowedLorries(
+        req.authRole,
+        assignmentData.containers.map((container) => container?.lorryId)
+      );
+      if (blocked) {
+        return res.status(403).json({ success: false, message: blocked });
+      }
       if (!can(req.authRole, 18) && assignmentData.containers.length > 1) {
         assignmentData.containers = assignmentData.containers.slice(0, 1);
       }
@@ -231,6 +300,7 @@ exports.createAssignLorry = async (req, res) => {
 exports.getAllAssignLorries = async (req, res) => {
   try {
     const assignments = await AssignLorry.find({})
+      .sort({ createdAt: -1 })
       .populate({ path: "createdBy", select: "fullName" })
       .populate({ path: "updatedBy", select: "fullName" })
       .populate({
@@ -333,7 +403,7 @@ exports.getAssignLorryById = async (req, res) => {
     };
     res.status(200).json({
       success: true,
-      data: assignmentWithStatus,
+      data: redactAssignment(assignmentWithStatus, req.authRole),
     });
   } catch (error) {
     res.status(500).json({
@@ -771,7 +841,30 @@ exports.updateBasicinfo = async (req, res) => {
 exports.addContainer = async (req, res) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid Assignment ID format." });
+    }
+
+    const assignment = await AssignLorry.findById(id);
+    if (!assignment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
+    }
+
     const newContainer = stripDeniedFromBody(req.body, req.authRole, "add");
+    const blocked = await rejectDisallowedLorries(req.authRole, [
+      newContainer.lorryId,
+    ]);
+    if (blocked) {
+      return res.status(403).json({ success: false, message: blocked });
+    }
+    const sourceResult = await applyTripFromSource(assignment, newContainer);
+    if (typeof sourceResult === "string") {
+      return res.status(400).json({ success: false, message: sourceResult });
+    }
     const { userid } = req.tokenData;
     newContainer.createdBy = userid;
     newContainer.updatedBy = userid;
@@ -796,10 +889,11 @@ exports.addContainer = async (req, res) => {
     if (!dated.advancedDate) delete newContainer.advancedDate;
     newContainer.fcl = emptyFcl();
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid Assignment ID format." });
+    if (newContainer.status === "completed") {
+      const message = completeRequiresMessage(newContainer);
+      if (message) {
+        return res.status(400).json({ success: false, message });
+      }
     }
 
     const updatedAssignment = await AssignLorry.findByIdAndUpdate(
@@ -812,6 +906,17 @@ exports.addContainer = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Assignment not found." });
+    }
+
+    if (sourceResult?._id && sourceResult.tripKind !== "yard") {
+      const locked = completedLockMessage(req.authRole, sourceResult);
+      if (locked) {
+        return res.status(403).json({ success: false, message: locked });
+      }
+      await AssignLorry.updateOne(
+        { _id: id, "containers._id": sourceResult._id },
+        { $set: { "containers.$.tripKind": "yard" } }
+      );
     }
 
     syncAssignment(req, "updated", id);
@@ -844,6 +949,18 @@ exports.removeContainer = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Invalid ID format provided." });
+    }
+
+    const assignment = await AssignLorry.findById(id);
+    if (!assignment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
+    }
+    const removing = assignment.containers.id(containerId);
+    const locked = completedLockMessage(req.authRole, removing);
+    if (locked) {
+      return res.status(403).json({ success: false, message: locked });
     }
 
     const updatedAssignment = await AssignLorry.findByIdAndUpdate(
@@ -907,6 +1024,13 @@ exports.updateContainerDetails = async (req, res) => {
         .json({ success: false, message: "Invalid ID format provided." });
     }
 
+    if (body.lorryId) {
+      const blocked = await rejectDisallowedLorries(req.authRole, [body.lorryId]);
+      if (blocked) {
+        return res.status(403).json({ success: false, message: blocked });
+      }
+    }
+
     const $set = {
       "containers.$.updatedBy": userid,
       "containers.$.updatedAt": new Date(),
@@ -932,6 +1056,16 @@ exports.updateContainerDetails = async (req, res) => {
       "containers._id": containerId,
     });
     const existing = existingAssignment?.containers?.id(containerId);
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or container does not exist.",
+      });
+    }
+    const locked = completedLockMessage(req.authRole, existing);
+    if (locked) {
+      return res.status(403).json({ success: false, message: locked });
+    }
     if (existing) {
       const dated = applyAdvancedDate({
         advanced: body.advanced ?? existing.advanced,
@@ -944,6 +1078,19 @@ exports.updateContainerDetails = async (req, res) => {
         $set["containers.$.advancedDate"] = dated.advancedDate;
       } else {
         $unset["containers.$.advancedDate"] = 1;
+      }
+      const nextStatus =
+        body.status !== undefined ? body.status : existing.status;
+      if (nextStatus === "completed") {
+        const message = completeRequiresMessage({
+          weight: body.weight !== undefined ? body.weight : existing.weight,
+          dayHire: body.dayHire !== undefined ? body.dayHire : existing.dayHire,
+          advanced:
+            body.advanced !== undefined ? body.advanced : existing.advanced,
+        });
+        if (message) {
+          return res.status(400).json({ success: false, message });
+        }
       }
     }
 
@@ -1014,6 +1161,10 @@ exports.payContainerBalance = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Container does not exist." });
+    }
+    const locked = completedLockMessage(req.authRole, container);
+    if (locked) {
+      return res.status(403).json({ success: false, message: locked });
     }
 
     const charged = container.toObject ? container.toObject() : container;
@@ -1129,6 +1280,7 @@ exports.payContainersBalance = async (req, res) => {
       if (!mongoose.Types.ObjectId.isValid(containerId)) return;
       const container = assignment.containers.id(containerId);
       if (!container) return;
+      if (completedLockMessage(req.authRole, container)) return;
       const remaining = remainingHire(container);
       if (remaining <= 0) return;
       container.balancePaid = Number(container.balancePaid || 0) + remaining;
@@ -1168,7 +1320,7 @@ exports.payContainersBalance = async (req, res) => {
 exports.updatedContainerStatus = async (req, res) => {
   try {
     const { id, containerId } = req.params;
-    const { status, fcl } = req.body;
+    const { status, fcl, tripKind } = req.body;
     const { userid } = req.tokenData;
 
     if (
@@ -1180,11 +1332,50 @@ exports.updatedContainerStatus = async (req, res) => {
         .json({ success: false, message: "Invalid ID format provided." });
     }
 
-    if (status === undefined && fcl === undefined) {
+    if (status === undefined && fcl === undefined && tripKind === undefined) {
       return res.status(400).json({
         success: false,
         message: "No status or FCL update provided.",
       });
+    }
+
+    if (tripKind !== undefined && tripKind !== "yard") {
+      return res.status(400).json({
+        success: false,
+        message: "Only yard can be marked on the container card.",
+      });
+    }
+
+    const assignment = await AssignLorry.findOne({
+      _id: id,
+      "containers._id": containerId,
+    });
+    const container = assignment?.containers?.id(containerId);
+    if (!assignment || !container) {
+      return res.status(404).json({
+        success: false,
+        message: "Assignment not found or container does not exist.",
+      });
+    }
+    const locked = completedLockMessage(req.authRole, container);
+    if (locked) {
+      return res.status(403).json({ success: false, message: locked });
+    }
+
+    if (status === "completed") {
+      const message = completeRequiresMessage(container);
+      if (message) {
+        return res.status(400).json({ success: false, message });
+      }
+    }
+
+    if (tripKind === "yard") {
+      if (container.tripKind === "onward" || container.sourceContainerId) {
+        return res.status(400).json({
+          success: false,
+          message: "A store trip cannot be marked as yard.",
+        });
+      }
     }
 
     const $set = {
@@ -1193,6 +1384,9 @@ exports.updatedContainerStatus = async (req, res) => {
     };
     if (status !== undefined) {
       $set["containers.$.status"] = status;
+    }
+    if (tripKind !== undefined) {
+      $set["containers.$.tripKind"] = tripKind;
     }
     if (fcl !== undefined) {
       const applied = applyFclToContainer({ fcl });

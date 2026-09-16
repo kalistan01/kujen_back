@@ -51,6 +51,10 @@ exports.publicUser = (user) => {
     admin,
     permission: admin ? [] : role?.permission || [],
     denied: admin ? [] : role?.denied || [],
+    restrictLorryOwners: admin ? false : Boolean(role?.restrictLorryOwners),
+    allowedLorryOwners: admin
+      ? []
+      : (role?.allowedLorryOwners || []).map((id) => String(id?._id || id)),
   };
 };
 
@@ -62,7 +66,7 @@ exports.requireAdmin = async (req, res, next) => {
     }
     const user = await User.findById(userid).populate(
       "roleId",
-      "roleName admin permission denied status"
+      "roleName admin permission denied status allowedLorryOwners restrictLorryOwners"
     );
     if (!user) {
       return res.status(401).json({ success: false, message: "Unauthorized" });

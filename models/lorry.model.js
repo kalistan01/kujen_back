@@ -5,7 +5,6 @@ const lorrySchema = new mongoose.Schema(
     lorryNum: {
       type: String,
       required: [true, "Lorry number is required."],
-      unique: true,
     },
     capacity: {
       type: String,
@@ -19,6 +18,8 @@ const lorrySchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+lorrySchema.index({ lorryNum: 1, owner: 1 }, { unique: true });
 
 const Lorry = mongoose.models.Lorry || mongoose.model("Lorry", lorrySchema);
 module.exports = Lorry;

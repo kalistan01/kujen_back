@@ -1,4 +1,5 @@
-const { User } = require("../models");
+const mongoose = require("mongoose");
+const { User, Lorry } = require("../models");
 const { isAdminRole, accessDeniedMessage } = require("./requireAdmin");
 
 const FIELD_BY_ID = {
@@ -47,7 +48,7 @@ const FIELD_ADD_BY_ID = {
 };
 
 const MUST_GRANT = new Set([
-  1, 2, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  1, 2, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
   52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
 ]);
 
@@ -93,6 +94,150 @@ function can(role, id) {
   const editId = legacyFieldAdd[id];
   if (editId && permission.includes(editId) && !denied.includes(id)) return true;
   return !MUST_GRANT.has(id);
+}
+
+function canViewFullFleet(role) {
+  return can(role, 3) || can(role, 4) || can(role, 13);
+}
+
+function idString(value) {
+  if (!value) return "";
+  if (typeof value === "object") return String(value._id || value.id || "");
+  return String(value);
+}
+
+function allowedOwnerIdSet(role) {
+  if (!role || isAdminRole(role)) return null;
+  const ids = (Array.isArray(role.allowedLorryOwners) ? role.allowedLorryOwners : [])
+    .map(idString)
+    .filter(Boolean);
+  const restricted =
+    Boolean(role.restrictLorryOwners) ||
+    (role.restrictLorryOwners == null && ids.length > 0);
+  if (!restricted) return null;
+  return new Set(ids);
+}
+
+function isOwnerInScope(role, ownerId) {
+  const allowed = allowedOwnerIdSet(role);
+  if (!allowed) return true;
+  return allowed.has(idString(ownerId));
+}
+
+function ownerIdFromContainer(container) {
+  if (!container || typeof container !== "object") return "";
+  const lorry = container.lorryId;
+  if (lorry && typeof lorry === "object") {
+    const owner = lorry.owner;
+    if (owner && typeof owner === "object") return idString(owner);
+    if (owner) return String(owner);
+  }
+  return "";
+}
+
+function filterContainersByOwnerScope(containers, role) {
+  const allowed = allowedOwnerIdSet(role);
+  if (!allowed) return containers;
+  return (Array.isArray(containers) ? containers : []).filter((container) =>
+    allowed.has(ownerIdFromContainer(container))
+  );
+}
+
+async function rejectDisallowedLorries(role, lorryIds) {
+  const allowed = allowedOwnerIdSet(role);
+  if (!allowed) return null;
+  const ids = [...new Set((lorryIds || []).map(idString))].filter((id) =>
+    mongoose.Types.ObjectId.isValid(id)
+  );
+  if (!ids.length) return null;
+  const lorries = await Lorry.find({ _id: { $in: ids } }).select("owner");
+  const blocked = lorries.some((lorry) => !allowed.has(idString(lorry.owner)));
+  if (blocked) {
+    return "You can only use lorries assigned to your role.";
+  }
+  return null;
+}
+
+function slimOwner(owner) {
+  if (!owner || typeof owner !== "object") return owner;
+  const obj = owner.toObject ? owner.toObject() : { ...owner };
+  return {
+    _id: obj._id,
+    ownerName: obj.ownerName,
+    companyName: obj.companyName,
+    lorries: (obj.lorries || []).map((lorry) => ({
+      _id: lorry._id,
+      lorryNum: lorry.lorryNum,
+      capacity: lorry.capacity,
+      owner:
+        lorry.owner && typeof lorry.owner === "object"
+          ? lorry.owner._id
+          : lorry.owner,
+      inUse: lorry.inUse,
+    })),
+  };
+}
+
+function slimLorry(lorry) {
+  if (!lorry || typeof lorry !== "object") return lorry;
+  const obj = lorry.toObject ? lorry.toObject() : { ...lorry };
+  const owner = obj.owner;
+  return {
+    _id: obj._id,
+    lorryNum: obj.lorryNum,
+    capacity: obj.capacity,
+    owner:
+      owner && typeof owner === "object"
+        ? {
+            _id: owner._id,
+            ownerName: owner.ownerName,
+            companyName: owner.companyName,
+          }
+        : owner,
+    inUse: obj.inUse,
+  };
+}
+
+function redactLorryOwner(owner, role) {
+  if (!owner) return owner;
+  const obj = owner.toObject ? owner.toObject() : owner;
+  if (!isOwnerInScope(role, obj._id || obj.id)) return null;
+  if (canViewFullFleet(role)) return obj;
+  return slimOwner(obj);
+}
+
+function redactLorry(lorry, role) {
+  if (!lorry) return lorry;
+  const obj = lorry.toObject ? lorry.toObject() : lorry;
+  const ownerId =
+    obj.owner && typeof obj.owner === "object" ? obj.owner._id : obj.owner;
+  if (!isOwnerInScope(role, ownerId)) return null;
+  if (canViewFullFleet(role)) return obj;
+  return slimLorry(obj);
+}
+
+function stripOwnerContactsFromAssignment(assignment) {
+  if (!assignment || typeof assignment !== "object") return assignment;
+  const obj = { ...assignment };
+  if (!Array.isArray(obj.containers)) return obj;
+  obj.containers = obj.containers.map((container) => {
+    if (!container || typeof container !== "object") return container;
+    const next = { ...container };
+    delete next.lorryownerphn;
+    const lorry = next.lorryId;
+    if (lorry && typeof lorry === "object" && lorry.owner && typeof lorry.owner === "object") {
+      next.lorryId = {
+        ...lorry,
+        owner: {
+          _id: lorry.owner._id,
+          ownerName: lorry.owner.ownerName,
+          companyName: lorry.owner.companyName,
+        },
+      };
+    }
+    return next;
+  });
+  return obj;
 }
 
 function canSeeField(role, key) {
@@ -167,8 +312,12 @@ function redactContainer(container, role) {
 }
 
 function redactAssignment(assignment, role) {
-  if (!assignment || isAdminRole(role)) return assignment;
-  const obj = assignment.toObject ? assignment.toObject() : { ...assignment };
+  if (!assignment) return assignment;
+  let obj = assignment.toObject ? assignment.toObject() : { ...assignment };
+  if (isAdminRole(role)) return obj;
+  if (Array.isArray(obj.containers)) {
+    obj.containers = filterContainersByOwnerScope(obj.containers, role);
+  }
   const count = Array.isArray(obj.containers) ? obj.containers.length : 0;
   obj.containerCount = count;
   if (!can(role, 17)) {
@@ -179,6 +328,9 @@ function redactAssignment(assignment, role) {
     obj.containers = obj.containers.map((container) =>
       redactContainer(container, role)
     );
+  }
+  if (!canViewFullFleet(role)) {
+    obj = stripOwnerContactsFromAssignment(obj);
   }
   return obj;
 }
@@ -211,7 +363,7 @@ async function loadAuthRole(req, res, next) {
     }
     const user = await User.findById(userid).populate(
       "roleId",
-      "roleName admin permission denied status"
+      "roleName admin permission denied status allowedLorryOwners restrictLorryOwners"
     );
     if (!user) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
@@ -257,6 +409,13 @@ module.exports = {
   canSeeField,
   canAddField,
   canEditField,
+  canViewFullFleet,
+  allowedOwnerIdSet,
+  isOwnerInScope,
+  filterContainersByOwnerScope,
+  rejectDisallowedLorries,
+  redactLorryOwner,
+  redactLorry,
   deniedFieldKeys,
   uneditableFieldKeys,
   redactAssignment,

@@ -1,26 +1,7 @@
 const { LorryOwner, Lorry, AssignLorry } = require("../../models");
 const mongoose = require("mongoose");
-const { emitChange } = require("../../lib/socket");
-const { can } = require("../../middleware/rbac");
-
-function canViewFullFleet(role) {
-  return can(role, 3) || can(role, 4);
-}
-
-function slimOwnerForAssignment(owner) {
-  return {
-    _id: owner._id,
-    ownerName: owner.ownerName,
-    companyName: owner.companyName,
-    lorries: (owner.lorries || []).map((lorry) => ({
-      _id: lorry._id,
-      lorryNum: lorry.lorryNum,
-      capacity: lorry.capacity,
-      owner: lorry.owner,
-      inUse: lorry.inUse,
-    })),
-  };
-}
+const { emitLorryChange } = require("../../lib/socket");
+const { canViewFullFleet, redactLorryOwner, redactLorry, isOwnerInScope } = require("../../middleware/rbac");
 
 async function findLorriesUsedInAssignments(lorryIds) {
   const ids = (lorryIds || []).filter((id) =>
@@ -39,8 +20,8 @@ function formatSaveError(error) {
   if (error?.code === 11000) {
     const field = Object.keys(error.keyValue || {})[0];
     const value = error.keyValue?.[field];
-    if (field === "lorryNum") {
-      return `Lorry number "${value}" is already registered.`;
+    if (field === "lorryNum" || error.keyPattern?.lorryNum) {
+      return `This owner already has lorry number "${error.keyValue?.lorryNum || value}".`;
     }
     return value
       ? `"${value}" is already in use.`
@@ -67,8 +48,7 @@ async function ownerForSync(ownerId) {
 }
 
 function syncLorryOwner(req, action, id, data) {
-  emitChange(req, {
-    module: "lorry",
+  emitLorryChange(req, {
     action,
     id,
     data: data ?? null,
@@ -100,19 +80,8 @@ exports.createLorryOwner = async (req, res) => {
     if (uniqueNums.size !== lorryNums.length) {
       return res.status(400).json({
         success: false,
-        message: "Each lorry number must be unique.",
+        message: "Each lorry number must be unique for this owner.",
       });
-    }
-    if (lorryNums.length) {
-      const existing = await Lorry.find({
-        lorryNum: { $in: lorryNums },
-      }).select("lorryNum");
-      if (existing.length) {
-        return res.status(400).json({
-          success: false,
-          message: `Lorry number "${existing[0].lorryNum}" is already registered.`,
-        });
-      }
     }
 
     const owner = new LorryOwner({
@@ -168,7 +137,10 @@ exports.getAllLorryOwners = async (req, res) => {
   try {
     const owners = await LorryOwner.find().lean();
     const lorries = await markLorriesInUse(await Lorry.find().lean());
-    const ownersWithLorries = owners.map((owner) => {
+    const scopedOwners = owners.filter((owner) =>
+      isOwnerInScope(req.authRole, owner._id)
+    );
+    const ownersWithLorries = scopedOwners.map((owner) => {
       return {
         ...owner,
         lorries: lorries.filter(
@@ -176,9 +148,9 @@ exports.getAllLorryOwners = async (req, res) => {
         ),
       };
     });
-    const payload = canViewFullFleet(req.authRole)
-      ? ownersWithLorries
-      : ownersWithLorries.map(slimOwnerForAssignment);
+    const payload = ownersWithLorries
+      .map((owner) => redactLorryOwner(owner, req.authRole))
+      .filter(Boolean);
     res.status(200).json({ success: true, data: payload });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
@@ -192,20 +164,7 @@ exports.getAllLorries = async (req, res) => {
         ? "ownerName companyName phoneNum address"
         : "ownerName companyName",
     });
-    const data = canViewFullFleet(req.authRole)
-      ? allLorries
-      : allLorries.map((lorry) => ({
-          _id: lorry._id,
-          lorryNum: lorry.lorryNum,
-          capacity: lorry.capacity,
-          owner: lorry.owner
-            ? {
-                _id: lorry.owner._id,
-                ownerName: lorry.owner.ownerName,
-                companyName: lorry.owner.companyName,
-              }
-            : lorry.owner,
-        }));
+    const data = allLorries.map((lorry) => redactLorry(lorry, req.authRole)).filter(Boolean);
     res.status(200).json({
       success: true,
       count: data.length,
@@ -224,19 +183,22 @@ exports.getLorryOwnerById = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Invalid Owner ID" });
     }
-    const lorryOwner = await LorryOwner.findById(ownerId);
+    if (!isOwnerInScope(req.authRole, ownerId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to access this resource",
+      });
+    }
+    const lorryOwner = await LorryOwner.findById(ownerId).lean();
     if (!lorryOwner) {
       return res
         .status(404)
         .json({ success: false, message: "Lorry owner not found" });
     }
-    const data = canViewFullFleet(req.authRole)
-      ? lorryOwner
-      : {
-          _id: lorryOwner._id,
-          ownerName: lorryOwner.ownerName,
-          companyName: lorryOwner.companyName,
-        };
+    const lorries = await markLorriesInUse(
+      await Lorry.find({ owner: ownerId }).lean()
+    );
+    const data = redactLorryOwner({ ...lorryOwner, lorries }, req.authRole);
     res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server Error" });
@@ -270,6 +232,16 @@ exports.updateLorryOwner = async (req, res) => {
     }
 
     if (Array.isArray(lorries)) {
+      const incomingNums = lorries
+        .map((lorry) => String(lorry?.lorryNum || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (new Set(incomingNums).size !== incomingNums.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Each lorry number must be unique for this owner.",
+        });
+      }
+
       const existingLorries = await Lorry.find({ owner: ownerId });
       const incomingIds = new Set(
         lorries

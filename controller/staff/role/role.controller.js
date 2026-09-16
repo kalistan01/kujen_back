@@ -1,6 +1,7 @@
-const { Role } = require("../../../models");
+const { Role, LorryOwner } = require("../../../models");
 const { emitChange } = require("../../../lib/socket");
 const { isActiveFlag } = require("../../../middleware/requireAdmin");
+const mongoose = require("mongoose");
 
 function formatSaveError(error) {
   if (error?.code === 11000) {
@@ -36,6 +37,30 @@ function roleIdFromReq(req) {
   return String(req.body?.roleid || req.body?.roleId || req.headers.roleid || "").trim();
 }
 
+function parseAllowedLorryOwners(value) {
+  const ids = (Array.isArray(value) ? value : [])
+    .map((id) => String(id?._id || id || "").trim())
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  return [...new Set(ids)];
+}
+
+async function validAllowedLorryOwners(value, admin, restrict) {
+  if (admin || !restrict) return [];
+  const ids = parseAllowedLorryOwners(value);
+  if (!ids.length) {
+    const error = new Error("Select at least one lorry owner for a restricted role.");
+    error.status = 400;
+    throw error;
+  }
+  const count = await LorryOwner.countDocuments({ _id: { $in: ids } });
+  if (count !== ids.length) {
+    const error = new Error("One or more selected lorry owners were not found.");
+    error.status = 400;
+    throw error;
+  }
+  return ids;
+}
+
 function rolePayload(role) {
   if (!role) return null;
   return typeof role.toObject === "function" ? role.toObject() : role;
@@ -60,7 +85,7 @@ function sendError(res, status, message) {
 
 exports.addRole = async (req, res) => {
   try {
-    const { roleName, permission, denied, status, admin } = req.body;
+    const { roleName, permission, denied, status, admin, allowedLorryOwners, restrictLorryOwners } = req.body;
     const name = String(roleName || "").trim();
 
     if (!name) {
@@ -72,10 +97,17 @@ exports.addRole = async (req, res) => {
       return sendError(res, 400, `Role name "${name}" already exists.`);
     }
 
+    const restrict = Boolean(admin ? false : restrictLorryOwners);
     const result = await Role.create({
       roleName: name,
       permission,
       denied,
+      restrictLorryOwners: restrict,
+      allowedLorryOwners: await validAllowedLorryOwners(
+        allowedLorryOwners,
+        admin,
+        restrict
+      ),
       status: isActiveFlag(status),
       admin,
     });
@@ -87,6 +119,9 @@ exports.addRole = async (req, res) => {
       data: rolePayload(result),
     });
   } catch (error) {
+    if (error.status === 400) {
+      return sendError(res, 400, error.message);
+    }
     if (error.name === "ValidationError" || error.code === 11000) {
       return sendError(res, 400, formatSaveError(error));
     }
@@ -97,7 +132,7 @@ exports.addRole = async (req, res) => {
 exports.findRole = async (req, res) => {
   try {
     const result = await Role.find()
-      .select("roleName permission denied status admin createdAt updatedAt")
+      .select("roleName permission denied restrictLorryOwners allowedLorryOwners status admin createdAt updatedAt")
       .sort({ createdAt: -1 })
       .lean();
     return res.status(200).send({
@@ -111,7 +146,7 @@ exports.findRole = async (req, res) => {
 
 exports.updateRole = async (req, res) => {
   try {
-    const { roleName, permission, denied, admin, status } = req.body;
+    const { roleName, permission, denied, admin, status, allowedLorryOwners, restrictLorryOwners } = req.body;
     const roleid = roleIdFromReq(req);
     const name = String(roleName || "").trim();
 
@@ -127,10 +162,17 @@ exports.updateRole = async (req, res) => {
       return sendError(res, 400, `Role name "${name}" already exists.`);
     }
 
+    const restrict = Boolean(admin ? false : restrictLorryOwners);
     const update = {
       roleName: name,
       permission,
       denied,
+      restrictLorryOwners: restrict,
+      allowedLorryOwners: await validAllowedLorryOwners(
+        allowedLorryOwners,
+        admin,
+        restrict
+      ),
       admin,
     };
     if (status !== undefined) {
@@ -152,6 +194,9 @@ exports.updateRole = async (req, res) => {
       data: rolePayload(result),
     });
   } catch (error) {
+    if (error.status === 400) {
+      return sendError(res, 400, error.message);
+    }
     if (error.name === "ValidationError" || error.code === 11000) {
       return sendError(res, 400, formatSaveError(error));
     }

@@ -2,7 +2,7 @@ const PDFDocument = require("pdfkit");
 const ExcelJS = require("exceljs");
 const mongoose = require("mongoose");
 const { AssignLorry } = require("../../models");
-const { canSeeField, redactAssignment } = require("../../middleware/rbac");
+const { canSeeField, redactAssignment, filterContainersByOwnerScope } = require("../../middleware/rbac");
 const { formatFclRecord } = require("../../lib/fcl");
 const {
   brandName,
@@ -228,6 +228,7 @@ async function buildExcel(assignment, role) {
     { header: "BL Number", key: "blNo", width: 16 },
     { header: "Assignment Status", key: "status", width: 18 },
     { header: "Cusdec Date", key: "cusdecDate", width: 14 },
+    { header: "FCL Due Date", key: "fclDueDate", width: 14 },
     { header: "Cusdec Number", key: "cusdecNo", width: 16 },
     { header: "Registration No.", key: "regNo", width: 16 },
     { header: "Item", key: "item", width: 16 },
@@ -334,6 +335,7 @@ async function buildExcel(assignment, role) {
       blNo: assignment.blNo || "",
       status: (assignment.status || "pending").replace(/-/g, " "),
       cusdecDate: formatDate(assignment.cusdecDate),
+      fclDueDate: formatDate(assignment.fclDueDate),
       cusdecNo: assignment.cusdecNo || "",
       regNo: assignment.regNo || "",
       item: assignment.item || "",
@@ -460,6 +462,7 @@ function buildPdf(assignment, role) {
     section("Assignment details");
     kv([
       ["Cusdec Date", formatDate(assignment.cusdecDate)],
+      ["FCL Due Date", formatDate(assignment.fclDueDate)],
       ["Cusdec Number", assignment.cusdecNo],
       ["Registration No.", assignment.regNo],
       ["Item", assignment.item],
@@ -715,6 +718,7 @@ async function buildListExcel(assignments) {
     { header: "BL Number", key: "blNo", width: 16 },
     { header: "Status", key: "status", width: 14 },
     { header: "Cusdec Date", key: "cusdecDate", width: 14 },
+    { header: "FCL Due Date", key: "fclDueDate", width: 14 },
     { header: "Cusdec Number", key: "cusdecNo", width: 16 },
     { header: "Registration No.", key: "regNo", width: 16 },
     { header: "Item", key: "item", width: 18 },
@@ -730,6 +734,7 @@ async function buildListExcel(assignments) {
       blNo: assignment.blNo || "",
       status: (assignment.status || "pending").replace(/-/g, " "),
       cusdecDate: formatDate(assignment.cusdecDate),
+      fclDueDate: formatDate(assignment.fclDueDate),
       cusdecNo: assignment.cusdecNo || "",
       regNo: assignment.regNo || "",
       item: assignment.item || "",
@@ -979,6 +984,7 @@ async function loadSelectedContainerRows(containerIds) {
           _id: assignment._id,
           blNo: assignment.blNo,
           cusdecDate: assignment.cusdecDate,
+          fclDueDate: assignment.fclDueDate,
           cusdecNo: assignment.cusdecNo,
           regNo: assignment.regNo,
           item: assignment.item,
@@ -1110,6 +1116,7 @@ function buildSelectedContainersPdf(rows, role) {
       kv([
         ["BL Number", assignment.blNo],
         ["Cusdec Date", formatDateDmy(assignment.cusdecDate)],
+        ["FCL Due Date", formatDateDmy(assignment.fclDueDate)],
         ["Cusdec Number", assignment.cusdecNo],
         ["Registration No.", assignment.regNo],
         ["Item", assignment.item],
@@ -1272,7 +1279,10 @@ exports.exportSelectedContainersPdf = async (req, res) => {
       });
     }
     const rows = await loadSelectedContainerRows(containerIds);
-    const buffer = await buildSelectedContainersPdf(rows, req.authRole);
+    const scoped = rows.filter((row) =>
+      filterContainersByOwnerScope([row.container], req.authRole).length
+    );
+    const buffer = await buildSelectedContainersPdf(scoped, req.authRole);
     return sendFile(
       res,
       buffer,
