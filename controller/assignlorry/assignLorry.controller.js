@@ -1375,7 +1375,9 @@ exports.updatedContainerStatus = async (req, res) => {
       });
     }
 
-    if (tripKind !== undefined && tripKind !== "yard") {
+    const clearingYard =
+      tripKind === "" || tripKind === null || tripKind === "none";
+    if (tripKind !== undefined && tripKind !== "yard" && !clearingYard) {
       return res.status(400).json({
         success: false,
         message: "Only yard can be marked on the container card.",
@@ -1414,15 +1416,49 @@ exports.updatedContainerStatus = async (req, res) => {
       }
     }
 
+    if (clearingYard) {
+      if (!isAdminRole(req.authRole)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only an administrator can reverse a yard mark.",
+        });
+      }
+      if (container.tripKind !== "yard") {
+        return res.status(400).json({
+          success: false,
+          message: "This container is not marked as yard.",
+        });
+      }
+      if (container.sourceContainerId) {
+        return res.status(400).json({
+          success: false,
+          message: "A store trip cannot be reversed this way.",
+        });
+      }
+      const hasOnward = (assignment.containers || []).some(
+        (item) => String(item.sourceContainerId || "") === String(container._id)
+      );
+      if (hasOnward) {
+        return res.status(400).json({
+          success: false,
+          message: "Remove the store trip before reversing the yard mark.",
+        });
+      }
+    }
+
     const $set = {
       "containers.$.updatedBy": userid,
       "containers.$.updatedAt": new Date(),
     };
+    const $unset = {};
     if (status !== undefined) {
       $set["containers.$.status"] = status;
     }
-    if (tripKind !== undefined) {
+    if (tripKind === "yard") {
       $set["containers.$.tripKind"] = tripKind;
+    }
+    if (clearingYard) {
+      $unset["containers.$.tripKind"] = 1;
     }
     if (fcl !== undefined) {
       const applied = applyFclToContainer({ fcl });
@@ -1437,7 +1473,7 @@ exports.updatedContainerStatus = async (req, res) => {
 
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      { $set },
+      Object.keys($unset).length ? { $set, $unset } : { $set },
       { new: true }
     );
     if (!updatedAssignment) {
