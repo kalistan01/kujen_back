@@ -361,6 +361,61 @@ exports.getUserById = async (req, res) => {
 };
 
 /**
+ * @description Admin sets another user's password
+ * @route PATCH /user/:userId/password
+ */
+exports.changeUserPassword = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return sendError(res, 400, "Invalid user ID.");
+    }
+
+    const password = req.body?.password;
+    const confirmPassword = req.body?.confirmPassword;
+    if (!password || String(password).length < 6) {
+      return sendError(res, 400, "Password must be at least 6 characters.");
+    }
+    if (
+      confirmPassword != null &&
+      String(confirmPassword) !== String(password)
+    ) {
+      return sendError(res, 400, "Passwords do not match.");
+    }
+
+    const actorId = String(req.tokenData?.userid || "");
+    if (actorId && actorId === String(userId)) {
+      return sendError(
+        res,
+        400,
+        "Choose another account. This action is for other users."
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { password: hashedPassword },
+      { new: true }
+    ).select("-password");
+
+    if (!user) {
+      return sendError(res, 404, "User not found.");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Password updated successfully.",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Could not update the password. Please try again.",
+    });
+  }
+};
+
+/**
  * @description Update a user
  * @route PUT /api/users/:userId
  */

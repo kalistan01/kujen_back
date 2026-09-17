@@ -135,6 +135,10 @@ function describeAction(req) {
   if (url.includes("/activateRole"))
     return { module: "role", action: "Activated role" };
 
+  if (url.includes("/user/") && url.includes("/password")) {
+    return { module: "user", action: "Changed user password" };
+  }
+
   if (url.includes("/user/") || url.endsWith("/user") || url.includes("/user?")) {
     if (method === "POST") return { module: "user", action: "Created user" };
     if (method === "PUT") return { module: "user", action: "Updated user" };

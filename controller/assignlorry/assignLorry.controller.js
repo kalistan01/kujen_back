@@ -650,6 +650,7 @@ exports.getAssignLorryByIds = async (req, res) => {
           updatedBy: { $first: "$updatedBy" },
           blNo: { $first: "$blNo" },
           cusdecDate: { $first: "$cusdecDate" },
+          fclDueDate: { $first: "$fclDueDate" },
           cusdecNo: { $first: "$cusdecNo" },
           regNo: { $first: "$regNo" },
           item: { $first: "$item" },
@@ -667,6 +668,7 @@ exports.getAssignLorryByIds = async (req, res) => {
           updatedAt: 1,
           blNo: 1,
           cusdecDate: 1,
+          fclDueDate: 1,
           cusdecNo: 1,
           regNo: 1,
           item: 1,
@@ -807,13 +809,37 @@ exports.updateBasicinfo = async (req, res) => {
       });
     }
 
-    const deletedAssignment = await AssignLorry.findByIdAndUpdate(
-      { _id: id },
-      { ...req.body, updatedBy: userid, updatedAt: new Date() },
+    const {
+      blNo,
+      cusdecDate,
+      fclDueDate,
+      cusdecNo,
+      regNo,
+      item,
+      exporter,
+      importer,
+    } = req.body || {};
+
+    const updatedAssignment = await AssignLorry.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          blNo,
+          cusdecDate,
+          fclDueDate: fclDueDate || "",
+          cusdecNo,
+          regNo,
+          item,
+          exporter,
+          importer,
+          updatedBy: userid,
+          updatedAt: new Date(),
+        },
+      },
       { new: true, runValidators: true }
     );
 
-    if (!deletedAssignment) {
+    if (!updatedAssignment) {
       return res.status(404).json({
         success: false,
         message: "Assignment not found.",
@@ -824,6 +850,16 @@ exports.updateBasicinfo = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Assignment updated successfully.",
+      data: {
+        blNo: updatedAssignment.blNo,
+        cusdecDate: updatedAssignment.cusdecDate,
+        fclDueDate: updatedAssignment.fclDueDate,
+        cusdecNo: updatedAssignment.cusdecNo,
+        regNo: updatedAssignment.regNo,
+        item: updatedAssignment.item,
+        exporter: updatedAssignment.exporter,
+        importer: updatedAssignment.importer,
+      },
     });
   } catch (error) {
     if (error.name === "ValidationError" || error.name === "CastError") {

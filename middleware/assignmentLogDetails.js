@@ -5,6 +5,7 @@ const { formatFclRecord } = require("../lib/fcl");
 const ASSIGNMENT_FIELDS = [
   ["blNo", "BL number"],
   ["cusdecDate", "Cusdec date"],
+  ["fclDueDate", "FCL due date"],
   ["cusdecNo", "Cusdec number"],
   ["regNo", "Registration number"],
   ["item", "Item"],
@@ -52,6 +53,7 @@ const MONEY_KEYS = new Set([
 
 const DATE_KEYS = new Set([
   "cusdecDate",
+  "fclDueDate",
   "loadingDate",
   "demoundDate",
   "advancedDate",
