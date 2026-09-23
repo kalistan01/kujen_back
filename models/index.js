@@ -5,4 +5,5 @@ exports.Role = require("./role.model");
 exports.User = require("./user.model");
 exports.Destination = require("./destination.model");
 exports.HeldUp = require("./heldUp.model");
+exports.OutHire = require("./outHire.model");
 exports.ActivityLog = require("./activityLog.model");
