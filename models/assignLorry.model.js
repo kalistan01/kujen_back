@@ -126,6 +126,10 @@ const assignLorrySchema = new mongoose.Schema(
           trim: true,
           default: "",
         },
+        fclExtendedDate: {
+          type: String,
+          trim: true,
+        },
 
         fcl: {
           enabled: {

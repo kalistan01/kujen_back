@@ -7,6 +7,7 @@ const {
   stripDeniedFromBody,
   canEditField,
   rejectDisallowedLorries,
+  filterContainersByOwnerScope,
 } = require("../../middleware/rbac");
 const { emitAssignmentChange } = require("../../lib/socket");
 const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
@@ -297,6 +298,106 @@ exports.createAssignLorry = async (req, res) => {
     });
   }
 };
+function calendarDateKey(value) {
+  if (!value) return "";
+  const part = String(value).substring(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(part)) return part;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+exports.getFclExtended = async (req, res) => {
+  try {
+    const assignments = await AssignLorry.find({
+      containers: {
+        $elemMatch: {
+          fclExtendedDate: { $exists: true, $nin: [null, ""] },
+        },
+      },
+    })
+      .select("blNo fclDueDate containers")
+      .populate({
+        path: "containers.lorryId",
+        select: "lorryNum capacity owner",
+        populate: { path: "owner", select: "ownerName companyName" },
+      })
+      .populate({ path: "containers.destination", select: "type location" })
+      .lean();
+
+    const rows = [];
+    assignments.forEach((assignment) => {
+      const containers = Array.isArray(assignment.containers)
+        ? assignment.containers
+        : [];
+      const loadedToStore = new Set(
+        containers
+          .map((container) =>
+            container?.sourceContainerId ? String(container.sourceContainerId) : ""
+          )
+          .filter(Boolean)
+      );
+      filterContainersByOwnerScope(containers, req.authRole).forEach(
+        (container) => {
+          const extended = calendarDateKey(container?.fclExtendedDate);
+          if (!extended) return;
+          const lorry =
+            container.lorryId && typeof container.lorryId === "object"
+              ? container.lorryId
+              : null;
+          const owner =
+            lorry?.owner && typeof lorry.owner === "object" ? lorry.owner : null;
+          const destination =
+            container.destination && typeof container.destination === "object"
+              ? container.destination
+              : null;
+          const tripKind =
+            container.tripKind === "yard" || container.tripKind === "onward"
+              ? container.tripKind
+              : container.sourceContainerId
+                ? "onward"
+                : "";
+          rows.push({
+            assignmentId: assignment._id,
+            blNo: assignment.blNo || "",
+            fclDueDate: calendarDateKey(assignment.fclDueDate),
+            containerId: container._id,
+            containerNo: container.containerNo || "",
+            vocNo: container.vocNo || "",
+            fclExtendedDate: extended,
+            lorryNum: lorry?.lorryNum || "",
+            capacity: lorry?.capacity ?? "",
+            ownerId: owner?._id ? String(owner._id) : "",
+            ownerName: owner?.ownerName || owner?.companyName || "",
+            destinationId: destination?._id ? String(destination._id) : "",
+            destination: [destination?.type, destination?.location]
+              .filter(Boolean)
+              .join(" · "),
+            yard:
+              tripKind === "yard" && !loadedToStore.has(String(container._id)),
+          });
+        }
+      );
+    });
+
+    rows.sort((a, b) =>
+      String(b.fclExtendedDate).localeCompare(String(a.fclExtendedDate))
+    );
+
+    res.status(200).json({
+      success: true,
+      count: rows.length,
+      data: rows,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Could not load FCL extended containers. Please try again.",
+    });
+  }
+};
+
 exports.getAllAssignLorries = async (req, res) => {
   try {
     const assignments = await AssignLorry.find({})
@@ -1072,6 +1173,21 @@ exports.updateContainerDetails = async (req, res) => {
       "containers.$.updatedAt": new Date(),
     };
     const $unset = {};
+    if (body.fclExtendedDate !== undefined) {
+      const raw = String(body.fclExtendedDate || "").trim();
+      if (!raw) {
+        $unset["containers.$.fclExtendedDate"] = 1;
+      } else {
+        const part = raw.slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(part)) {
+          return res.status(400).json({
+            success: false,
+            message: "FCL extended date must be a valid date.",
+          });
+        }
+        $set["containers.$.fclExtendedDate"] = part;
+      }
+    }
     allowed.forEach((key) => {
       if (body[key] !== undefined) {
         if (key === "destination" && !body[key]) return;
@@ -1091,6 +1207,16 @@ exports.updateContainerDetails = async (req, res) => {
       _id: id,
       "containers._id": containerId,
     });
+    const extendedPart = $set["containers.$.fclExtendedDate"];
+    if (extendedPart && existingAssignment?.fclDueDate) {
+      const due = String(existingAssignment.fclDueDate).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(due) && extendedPart < due) {
+        return res.status(400).json({
+          success: false,
+          message: "FCL extended date cannot be before the FCL due date.",
+        });
+      }
+    }
     const existing = existingAssignment?.containers?.id(containerId);
     if (!existing) {
       return res.status(404).json({

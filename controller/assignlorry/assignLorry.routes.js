@@ -33,6 +33,11 @@ router.post(
 );
 router.get("/next-voc", ...viewAssignment, assignLorryController.getNextVocNo);
 router.get(
+  "/fcl-extended",
+  ...viewContainers,
+  assignLorryController.getFclExtended
+);
+router.get(
   "/:id/export/pdf",
   ...viewAssignment,
   assignmentExport.exportAssignmentPdf

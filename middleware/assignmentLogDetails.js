@@ -33,6 +33,7 @@ const CONTAINER_FIELDS = [
   ["transportCommission", "Transport commission"],
   ["return", "Return"],
   ["status", "Status"],
+  ["fclExtendedDate", "FCL extended date"],
   ["fcl", "FCL status"],
   ["tripKind", "Trip"],
   ["sourceContainerId", "From yard container"],
@@ -58,6 +59,7 @@ const DATE_KEYS = new Set([
   "demoundDate",
   "advancedDate",
   "balanceDate",
+  "fclExtendedDate",
 ]);
 
 function assignmentIdFromRequest(req) {
