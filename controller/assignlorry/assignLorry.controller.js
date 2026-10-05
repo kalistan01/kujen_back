@@ -361,6 +361,7 @@ exports.getFclExtended = async (req, res) => {
         populate: { path: "owner", select: "ownerName companyName" },
       })
       .populate({ path: "containers.destination", select: "type location" })
+      .populate({ path: "containers.buyer", select: "name" })
       .lean();
 
     const rows = [];
@@ -389,6 +390,10 @@ exports.getFclExtended = async (req, res) => {
             container.destination && typeof container.destination === "object"
               ? container.destination
               : null;
+          const buyer =
+            container.buyer && typeof container.buyer === "object"
+              ? container.buyer
+              : null;
           const tripKind =
             container.tripKind === "yard" || container.tripKind === "onward"
               ? container.tripKind
@@ -411,6 +416,10 @@ exports.getFclExtended = async (req, res) => {
             destination: [destination?.type, destination?.location]
               .filter(Boolean)
               .join(" · "),
+            buyerId: buyer?._id ? String(buyer._id) : "",
+            buyerName: buyer?.name || "",
+            billNumber: container.billNumber || "",
+            containerOut: container.containerOut || "",
             yard:
               tripKind === "yard" && !loadedToStore.has(String(container._id)),
           });
