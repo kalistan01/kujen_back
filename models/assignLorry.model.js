@@ -56,6 +56,16 @@ const assignLorrySchema = new mongoose.Schema(
           required: [true, "VOC number is required."],
           trim: true,
         },
+        billNumber: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        containerOut: {
+          type: String,
+          enum: ["RCT", "OUT PASS", "SCAN", "YARD"],
+          trim: true,
+        },
         lorryId: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "Lorry",
@@ -67,6 +77,10 @@ const assignLorrySchema = new mongoose.Schema(
         },
         demoundDate: {
           type: Date,
+        },
+        buyer: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Buyer",
         },
         destination: {
           type: mongoose.Schema.Types.ObjectId,

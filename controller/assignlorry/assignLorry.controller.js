@@ -29,10 +29,31 @@ function formatSaveError(error) {
     if (String(error.path || "").includes("destination")) {
       return "Please select a valid destination.";
     }
+    if (String(error.path || "").includes("buyer")) {
+      return "Please select a valid buyer.";
+    }
     return "One of the selected values is invalid.";
   }
 
   return error?.message || "Something went wrong. Please try again.";
+}
+
+function buyerRef(value) {
+  if (!value) return "";
+  if (typeof value === "object") return String(value._id || "");
+  return String(value).trim();
+}
+
+const CONTAINER_OUT_VALUES = ["RCT", "OUT PASS", "SCAN", "YARD"];
+
+function normalizeContainerOut(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return (
+    CONTAINER_OUT_VALUES.find(
+      (item) => item.toLowerCase() === raw.toLowerCase()
+    ) || null
+  );
 }
 
 function applyAdvancedDate(container = {}) {
@@ -134,6 +155,7 @@ async function loadAssignmentForSync(id) {
       populate: [
         { path: "createdBy", select: "fullName" },
         { path: "updatedBy", select: "fullName" },
+        { path: "buyer", select: "name address" },
         { path: "destination" },
         {
           path: "lorryId",
@@ -158,6 +180,11 @@ async function loadAssignmentForSync(id) {
         container.lorryOwner ||
         container.lorryId?.owner?.ownerName ||
         container.lorryId?.owner?.companyName,
+      buyerName:
+        container.buyerName ||
+        (container.buyer && typeof container.buyer === "object"
+          ? container.buyer.name
+          : ""),
       destinationlocation:
         container.destinationlocation || container.destination?.location,
       destinationtype:
@@ -260,6 +287,16 @@ exports.createAssignLorry = async (req, res) => {
           });
         }
         if (!dated.demoundDate) delete dated.demoundDate;
+        dated.billNumber = String(dated.billNumber || "").trim();
+        const containerOut = normalizeContainerOut(dated.containerOut);
+        if (containerOut === null) {
+          return res.status(400).json({
+            success: false,
+            message: "Container Out must be RCT, OUT PASS, SCAN, or YARD.",
+          });
+        }
+        if (containerOut) dated.containerOut = containerOut;
+        else delete dated.containerOut;
         nextContainers.push({
           ...dated,
           fcl: applied.fcl,
@@ -409,7 +446,8 @@ exports.getAllAssignLorries = async (req, res) => {
         populate: [
           { path: "createdBy", select: "fullName" },
           { path: "updatedBy", select: "fullName" },
-          { path: "destination" },
+          { path: "buyer", select: "name address" },
+        { path: "destination" },
           {
             path: "lorryId",
             select: "lorryNum capacity owner",
@@ -434,6 +472,11 @@ exports.getAllAssignLorries = async (req, res) => {
           container.lorryOwner ||
           container.lorryId?.owner?.ownerName ||
           container.lorryId?.owner?.companyName,
+        buyerName:
+          container.buyerName ||
+          (container.buyer && typeof container.buyer === "object"
+            ? container.buyer.name
+            : ""),
         destinationlocation:
           container.destinationlocation || container.destination?.location,
       }));
@@ -477,7 +520,8 @@ exports.getAssignLorryById = async (req, res) => {
         populate: [
           { path: "createdBy", select: "fullName" },
           { path: "updatedBy", select: "fullName" },
-          { path: "destination" },
+          { path: "buyer", select: "name address" },
+        { path: "destination" },
           {
             path: "lorryId",
             select: "lorryNum capacity owner",
@@ -668,6 +712,46 @@ exports.getAssignLorryByIds = async (req, res) => {
         },
       },
 
+      {
+        $lookup: {
+          from: "buyers",
+          let: { buyer_id: "$containers.buyer" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$_id", "$$buyer_id"] },
+              },
+            },
+            {
+              $project: {
+                name: 1,
+                address: 1,
+              },
+            },
+          ],
+          as: "buyerInfo",
+        },
+      },
+      {
+        $unwind: { path: "$buyerInfo", preserveNullAndEmptyArrays: true },
+      },
+      {
+        $addFields: {
+          "containers.buyerName": "$buyerInfo.name",
+          "containers.buyerAddress": "$buyerInfo.address",
+          "containers.buyer": {
+            $cond: [
+              { $ifNull: ["$buyerInfo._id", false] },
+              {
+                _id: "$buyerInfo._id",
+                name: "$buyerInfo.name",
+                address: "$buyerInfo.address",
+              },
+              "$containers.buyer",
+            ],
+          },
+        },
+      },
       {
         $unwind: {
           path: "$containers.destination",
@@ -1013,9 +1097,29 @@ exports.addContainer = async (req, res) => {
     if (!newContainer.destination) {
       delete newContainer.destination;
     }
+    const buyerId = buyerRef(newContainer.buyer);
+    if (!buyerId) {
+      delete newContainer.buyer;
+    } else if (!mongoose.Types.ObjectId.isValid(buyerId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please select a valid buyer." });
+    } else {
+      newContainer.buyer = buyerId;
+    }
     if (!newContainer.demoundDate) {
       delete newContainer.demoundDate;
     }
+    newContainer.billNumber = String(newContainer.billNumber || "").trim();
+    const containerOut = normalizeContainerOut(newContainer.containerOut);
+    if (containerOut === null) {
+      return res.status(400).json({
+        success: false,
+        message: "Container Out must be RCT, OUT PASS, SCAN, or YARD.",
+      });
+    }
+    if (containerOut) newContainer.containerOut = containerOut;
+    else delete newContainer.containerOut;
     const [vocNo] = await nextVocNumbers(1);
     newContainer.vocNo = vocNo;
     const dated = applyAdvancedDate(newContainer);
@@ -1131,9 +1235,12 @@ exports.updateContainerDetails = async (req, res) => {
     const body = stripDeniedFromBody(req.body || {}, req.authRole);
     const allowed = [
       "containerNo",
+      "billNumber",
+      "containerOut",
       "lorryId",
       "loadingDate",
       "demoundDate",
+      "buyer",
       "destination",
       "weight",
       "dayHire",
@@ -1188,9 +1295,53 @@ exports.updateContainerDetails = async (req, res) => {
         $set["containers.$.fclExtendedDate"] = part;
       }
     }
+    if (body.buyer !== undefined) {
+      const id = buyerRef(body.buyer);
+      if (id && !mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({
+          success: false,
+          message: "Please select a valid buyer.",
+        });
+      }
+    }
+    if (
+      body.containerOut !== undefined &&
+      normalizeContainerOut(body.containerOut) === null
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Container Out must be RCT, OUT PASS, SCAN, or YARD.",
+      });
+    }
     allowed.forEach((key) => {
       if (body[key] !== undefined) {
+        if (key === "billNumber") {
+          $set["containers.$.billNumber"] = String(body[key] || "").trim();
+          return;
+        }
+        if (key === "containerOut") {
+          const containerOut = normalizeContainerOut(body[key]);
+          if (containerOut === null) return;
+          if (!containerOut) {
+            $unset["containers.$.containerOut"] = 1;
+            return;
+          }
+          $set["containers.$.containerOut"] = containerOut;
+          return;
+        }
         if (key === "destination" && !body[key]) return;
+        if (key === "buyer") {
+          const id = buyerRef(body[key]);
+          if (!id) {
+            $unset["containers.$.buyer"] = 1;
+            return;
+          }
+          if (!mongoose.Types.ObjectId.isValid(id)) {
+            return;
+          }
+          $set["containers.$.buyer"] = id;
+          return;
+        }
         if (key === "advancedDate") return;
         if (key === "demoundDate" && !body[key]) {
           $unset["containers.$.demoundDate"] = 1;

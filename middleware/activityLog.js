@@ -121,6 +121,11 @@ function describeAction(req) {
     }
   }
 
+  if (url.includes("/buyer")) {
+    if (method === "POST") return { module: "buyer", action: "Created buyer" };
+    if (method === "PUT") return { module: "buyer", action: "Updated buyer" };
+  }
+
   if (url.includes("/heldup")) {
     if (method === "POST")
       return { module: "heldup", action: "Created held up rate" };
@@ -160,6 +165,8 @@ function buildSummary(req, described) {
   if (body.roleName) return `${described.action} · ${body.roleName}`;
   if (body.ownerName || body.companyName)
     return `${described.action} · ${body.companyName || body.ownerName}`;
+  if (described.module === "buyer" && body.name)
+    return `${described.action} · ${body.name}`;
   if (body.type || body.location)
     return `${described.action} · ${[body.type, body.location]
       .filter(Boolean)

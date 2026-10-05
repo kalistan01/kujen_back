@@ -50,6 +50,7 @@ const FIELD_ADD_BY_ID = {
 const MUST_GRANT = new Set([
   1, 2, 3, 4, 5, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
   52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+  65, 66,
 ]);
 
 function toIdList(value) {
@@ -65,7 +66,7 @@ function can(role, id) {
   const permission = toIdList(role.permission);
   if (denied.includes(id)) return false;
   if (permission.includes(id)) return true;
-  const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9, 16: 5 };
+  const legacyEdit = { 12: 2, 13: 4, 14: 7, 15: 9, 16: 5, 66: 65 };
   const addId = legacyEdit[id];
   if (addId && permission.includes(addId) && !denied.includes(id)) return true;
   const legacyFromParent = {

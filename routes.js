@@ -8,6 +8,7 @@ router.use('/assignlorry', require('./controller/assignlorry/assignLorry.routes'
 router.use('/destination', require('./controller/destination/destination.routes'));
 router.use('/heldup', require('./controller/heldup/heldup.routes'));
 router.use('/outhire', require('./controller/outhire/outhire.routes'));
+router.use('/buyer', require('./controller/buyer/buyer.routes'));
 router.use('/dashboard', require('./controller/dashboard/dashboad.routes'));
 router.use('/logs', require('./controller/log/log.routes'));
 

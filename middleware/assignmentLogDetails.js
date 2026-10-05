@@ -16,6 +16,8 @@ const ASSIGNMENT_FIELDS = [
 const CONTAINER_FIELDS = [
   ["containerNo", "Container"],
   ["vocNo", "VOC"],
+  ["billNumber", "Bill number"],
+  ["containerOut", "Container out"],
   ["lorryId", "Lorry"],
   ["loadingDate", "Loading date"],
   ["demoundDate", "Demount date"],
