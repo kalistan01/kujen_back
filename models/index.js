@@ -8,3 +8,4 @@ exports.HeldUp = require("./heldUp.model");
 exports.OutHire = require("./outHire.model");
 exports.Buyer = require("./buyer.model");
 exports.ActivityLog = require("./activityLog.model");
+exports.Note = require("./note.model");

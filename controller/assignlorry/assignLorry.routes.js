@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const assignLorryController = require("./assignLorry.controller");
+const containerDocument = require("./containerDocument.controller");
 const assignmentExport = require("./assignmentExport.controller");
 const { checkToken } = require("../../middleware/token");
 const { loadAuthRole, requireCan, requireAny } = require("../../middleware/rbac");
@@ -57,6 +58,21 @@ router.patch(
   assignLorryController.payContainersBalance
 );
 router.post("/:id/containers", ...addContainer, assignLorryController.addContainer);
+router.post(
+  "/:id/containers/:containerId/documents",
+  ...editContainer,
+  containerDocument.uploadContainerDocument
+);
+router.get(
+  "/:id/containers/:containerId/documents/:docId",
+  ...viewAssignment,
+  containerDocument.getContainerDocument
+);
+router.delete(
+  "/:id/containers/:containerId/documents/:docId",
+  ...editContainer,
+  containerDocument.deleteContainerDocument
+);
 router
   .delete("/:id/containers/:containerId", ...editContainer, assignLorryController.removeContainer)
   .patch(

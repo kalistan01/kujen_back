@@ -32,7 +32,7 @@ function sanitize(value) {
   if (!value || typeof value !== "object") return value || null;
   try {
     const clone = JSON.parse(JSON.stringify(value));
-    const hide = ["password", "token", "cookie"];
+    const hide = ["password", "token", "cookie", "data", "html"];
     const walk = (obj) => {
       if (!obj || typeof obj !== "object") return;
       Object.keys(obj).forEach((key) => {
@@ -124,6 +124,10 @@ function describeAction(req) {
   if (url.includes("/buyer")) {
     if (method === "POST") return { module: "buyer", action: "Created buyer" };
     if (method === "PUT") return { module: "buyer", action: "Updated buyer" };
+  }
+
+  if (url.includes("/note") && method === "PUT") {
+    return { module: "note", action: "Updated note" };
   }
 
   if (url.includes("/heldup")) {

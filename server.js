@@ -40,7 +40,11 @@ app.use(
   })
 );
 app.use((req, res, next) => {
-  if (String(req.originalUrl || "").includes("/export/")) {
+  const url = String(req.originalUrl || "");
+  if (url.includes("/export/")) {
+    return next();
+  }
+  if (req.method === "GET" && /\/documents\/[^/]+\/?$/.test(url)) {
     return next();
   }
   res.setHeader("Content-Type", "application/json; charset=utf-8");

@@ -97,6 +97,14 @@ const assignLorrySchema = new mongoose.Schema(
           type: Number,
           default: 0,
         },
+        receivedWeight: {
+          type: Number,
+          default: 0,
+        },
+        declaredWeight: {
+          type: Number,
+          default: 0,
+        },
         dayHire: {
           type: Number,
           default: 0,
@@ -169,6 +177,36 @@ const assignLorrySchema = new mongoose.Schema(
             trim: true,
           },
         },
+        documents: [
+          {
+            originalName: {
+              type: String,
+              trim: true,
+              default: "",
+            },
+            mimeType: {
+              type: String,
+              trim: true,
+              required: true,
+            },
+            size: {
+              type: Number,
+              required: true,
+            },
+            storageKey: {
+              type: String,
+              required: true,
+            },
+            uploadedAt: {
+              type: Date,
+              default: Date.now,
+            },
+            uploadedBy: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "User",
+            },
+          },
+        ],
         createdBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",

@@ -11,5 +11,6 @@ router.use('/outhire', require('./controller/outhire/outhire.routes'));
 router.use('/buyer', require('./controller/buyer/buyer.routes'));
 router.use('/dashboard', require('./controller/dashboard/dashboad.routes'));
 router.use('/logs', require('./controller/log/log.routes'));
+router.use('/note', require('./controller/note/note.routes'));
 
 module.exports = router;

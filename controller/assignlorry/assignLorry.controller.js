@@ -108,6 +108,7 @@ function completedLockMessage(role, container) {
   if (isAdminRole(role)) return null;
   return "Only an administrator can edit a completed container.";
 }
+exports.completedLockMessage = completedLockMessage;
 
 function isFilledAmount(value) {
   const n = Number(value);
@@ -234,6 +235,7 @@ function syncAssignment(req, action, id) {
       console.error("Socket assignment emit failed:", error.message);
     });
 }
+exports.syncAssignment = syncAssignment;
 
 exports.getNextVocNo = async (req, res) => {
   try {
@@ -980,6 +982,20 @@ exports.deleteAssignLorry = async (req, res) => {
       });
     }
 
+    const fileKeys = [];
+    for (const container of deletedAssignment.containers || []) {
+      for (const doc of container.documents || []) {
+        if (doc.storageKey) fileKeys.push(doc.storageKey);
+      }
+    }
+    if (fileKeys.length) {
+      try {
+        await require("../../lib/fileStore").removeMany(fileKeys);
+      } catch (error) {
+        console.error("Could not remove container files:", error.message);
+      }
+    }
+
     syncAssignment(req, "deleted", id);
     res.status(200).json({
       success: true,
@@ -1252,6 +1268,8 @@ exports.updateContainerDetails = async (req, res) => {
       "buyer",
       "destination",
       "weight",
+      "receivedWeight",
+      "declaredWeight",
       "dayHire",
       "advanced",
       "advancedDate",
@@ -1354,6 +1372,11 @@ exports.updateContainerDetails = async (req, res) => {
         if (key === "advancedDate") return;
         if (key === "demoundDate" && !body[key]) {
           $unset["containers.$.demoundDate"] = 1;
+          return;
+        }
+        if (key === "receivedWeight" || key === "declaredWeight") {
+          const amount = Number(body[key]);
+          $set[`containers.$.${key}`] = Number.isFinite(amount) && amount > 0 ? amount : 0;
           return;
         }
         $set[`containers.$.${key}`] = body[key];

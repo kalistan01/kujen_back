@@ -23,6 +23,8 @@ const CONTAINER_FIELDS = [
   ["demoundDate", "Demount date"],
   ["destination", "Destination"],
   ["weight", "Weight"],
+  ["receivedWeight", "Received weight"],
+  ["declaredWeight", "Declared weight"],
   ["dayHire", "Day hire"],
   ["advanced", "Advanced"],
   ["advancedDate", "Advanced date"],
@@ -239,6 +241,25 @@ async function assignmentChangeSummary(req, described) {
       action: "Exported Excel",
       summary: withBl(previous, body, "Exported Excel"),
     };
+  }
+
+  if (url.includes("/documents")) {
+    const label = previousContainer?.containerNo || "container";
+    const fileName = String(body.name || "").trim();
+    if (method === "POST") {
+      return {
+        action: "Uploaded container document",
+        summary: fileName
+          ? `Uploaded ${fileName} on ${label}`
+          : `Uploaded a document on ${label}`,
+      };
+    }
+    if (method === "DELETE") {
+      return {
+        action: "Removed container document",
+        summary: `Removed a document from ${label}`,
+      };
+    }
   }
 
   if (method === "POST" && url.includes("/containers")) {
