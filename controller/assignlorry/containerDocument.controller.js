@@ -8,6 +8,10 @@ const {
 
 const MAX_BYTES = 100 * 1024;
 const MAX_BASE64_CHARS = 200000;
+const DOCUMENT_SLOTS = {
+  "weight-sheet": "Weight sheet",
+  "gate-pass": "Gate pass",
+};
 
 function invalidId(res) {
   return res.status(400).json({
@@ -27,6 +31,7 @@ function publicDocument(doc) {
   if (!doc) return null;
   return {
     _id: doc._id,
+    slot: doc.slot,
     originalName: doc.originalName,
     mimeType: doc.mimeType,
     size: doc.size,
@@ -118,9 +123,15 @@ exports.uploadContainerDocument = async (req, res) => {
       return res.status(403).json({ success: false, message: locked });
     }
 
-    const previousKeys = (container.documents || [])
-      .map((item) => item.storageKey)
-      .filter(Boolean);
+    const slot = String(req.body?.slot || "");
+    if (!DOCUMENT_SLOTS[slot]) {
+      return res.status(400).json({
+        success: false,
+        message: "Choose Weight sheet or Gate pass.",
+      });
+    }
+    const previous = (container.documents || []).find((item) => item.slot === slot);
+
     const docId = new mongoose.Types.ObjectId();
     const ext = mimeType === "application/pdf" ? "pdf" : "jpg";
     storageKey = `containers/${id}/${containerId}/${docId}.${ext}`;
@@ -128,6 +139,7 @@ exports.uploadContainerDocument = async (req, res) => {
 
     const doc = {
       _id: docId,
+      slot,
       originalName: safeName(req.body?.name, mimeType),
       mimeType,
       size: buffer.length,
@@ -138,7 +150,7 @@ exports.uploadContainerDocument = async (req, res) => {
 
     const updated = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      { $set: { "containers.$.documents": [doc] } },
+      { $push: { "containers.$.documents": doc } },
       { new: true }
     );
 
@@ -151,9 +163,13 @@ exports.uploadContainerDocument = async (req, res) => {
       });
     }
 
-    if (previousKeys.length) {
+    if (previous?.storageKey) {
+      await AssignLorry.findOneAndUpdate(
+        { _id: id, "containers._id": containerId },
+        { $pull: { "containers.$.documents": { _id: previous._id } } }
+      );
       try {
-        await fileStore.removeMany(previousKeys);
+        await fileStore.remove(previous.storageKey);
       } catch (error) {
         console.error("Could not remove the previous container file:", error.message);
       }

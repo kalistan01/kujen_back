@@ -179,6 +179,10 @@ const assignLorrySchema = new mongoose.Schema(
         },
         documents: [
           {
+            slot: {
+              type: String,
+              enum: ["weight-sheet", "gate-pass"],
+            },
             originalName: {
               type: String,
               trim: true,
