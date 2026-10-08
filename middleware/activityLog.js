@@ -70,6 +70,8 @@ function describeAction(req) {
     return { module: "assignment", action: "Exported Excel" };
   if (url.includes("/assignlorry") && url.includes("/pay-balances"))
     return { module: "assignment", action: "Paid selected balances" };
+  if (url.includes("/assignlorry") && url.includes("/revoke-balance"))
+    return { module: "assignment", action: "Revoked container balance" };
   if (url.includes("/assignlorry") && url.includes("/balance"))
     return { module: "assignment", action: "Paid container balance" };
   if (url.includes("/assignlorry") && url.includes("/containers")) {

@@ -324,6 +324,18 @@ async function assignmentChangeSummary(req, described) {
     };
   }
 
+  if (method === "PATCH" && url.includes("/revoke-balance")) {
+    const paid = Number(previousContainer?.balancePaid || 0);
+    const label = previousContainer?.containerNo || "container";
+    const date = formatDate(previousContainer?.balanceDate);
+    return {
+      action: "Revoked container balance",
+      summary: `Revoked ${formatMoney(paid)} balance paid for ${label}${
+        date !== "—" ? ` (paid on ${date})` : ""
+      }`,
+    };
+  }
+
   if (method === "PATCH" && url.includes("/balance")) {
     const remaining = Math.max(0, containerRemaining(previousContainer || {}));
     const label = previousContainer?.containerNo || "container";

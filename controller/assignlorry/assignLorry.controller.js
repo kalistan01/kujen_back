@@ -1567,6 +1567,85 @@ exports.payContainerBalance = async (req, res) => {
     });
   }
 };
+
+exports.revokeContainerBalance = async (req, res) => {
+  try {
+    if (!isAdminRole(req.authRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "Only an administrator can revoke a balance payment.",
+      });
+    }
+    const { id, containerId } = req.params;
+    const { userid } = req.tokenData;
+
+    if (
+      !mongoose.Types.ObjectId.isValid(id) ||
+      !mongoose.Types.ObjectId.isValid(containerId)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid ID format provided." });
+    }
+
+    const assignment = await AssignLorry.findById(id);
+    if (!assignment) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Assignment not found." });
+    }
+
+    const container = assignment.containers.id(containerId);
+    if (!container) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Container does not exist." });
+    }
+    const locked = completedLockMessage(req.authRole, container);
+    if (locked) {
+      return res.status(403).json({ success: false, message: locked });
+    }
+
+    const paid = Number(container.balancePaid || 0);
+    if (paid <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "This container has no balance paid to revoke.",
+      });
+    }
+
+    const updatedAssignment = await AssignLorry.findOneAndUpdate(
+      { _id: id, "containers._id": containerId },
+      {
+        $set: {
+          "containers.$.balancePaid": 0,
+          "containers.$.updatedBy": userid,
+          "containers.$.updatedAt": new Date(),
+        },
+        $unset: {
+          "containers.$.balanceDate": "",
+        },
+      },
+      { new: true }
+    );
+
+    const populated = await loadAssignmentForSync(id);
+    syncAssignment(req, "updated", id);
+    res.status(200).json({
+      success: true,
+      message: "Balance payment revoked.",
+      data: populated
+        ? redactAssignment(populated, req.authRole)
+        : updatedAssignment,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Could not revoke the balance payment. Please try again.",
+    });
+  }
+};
+
 const hireChargeKeys = [
   "weight",
   "dayHire",

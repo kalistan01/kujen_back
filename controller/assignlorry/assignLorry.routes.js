@@ -85,6 +85,11 @@ router
     ...editContainer,
     assignLorryController.payContainerBalance
   )
+  .patch(
+    "/:id/containers/:containerId/revoke-balance",
+    ...editContainer,
+    assignLorryController.revokeContainerBalance
+  )
   .put(
     "/:id/containers/:containerId",
     ...editContainer,
