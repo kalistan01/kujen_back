@@ -1,8 +1,8 @@
 module.exports = {
   apps: [
     {
-      name: "sc-api",
-      cwd: "/var/www/sc/back",
+      name: "rgb-api",
+      cwd: "/var/www/rgbt/back",
       script: "server.js",
       instances: 1,
       autorestart: true,
