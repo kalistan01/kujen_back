@@ -9,6 +9,8 @@ router.use('/destination', require('./controller/destination/destination.routes'
 router.use('/heldup', require('./controller/heldup/heldup.routes'));
 router.use('/outhire', require('./controller/outhire/outhire.routes'));
 router.use('/buyer', require('./controller/buyer/buyer.routes'));
+router.use('/staff-member', require('./controller/staffMember/staffMember.routes'));
+router.use('/attendance', require('./controller/attendance/attendance.routes'));
 router.use('/dashboard', require('./controller/dashboard/dashboad.routes'));
 router.use('/logs', require('./controller/log/log.routes'));
 router.use('/note', require('./controller/note/note.routes'));
