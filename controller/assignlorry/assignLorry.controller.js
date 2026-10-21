@@ -10,7 +10,11 @@ const {
   filterContainersByOwnerScope,
 } = require("../../middleware/rbac");
 const { emitAssignmentChange } = require("../../lib/socket");
-const { applyFclToContainer, emptyFcl } = require("../../lib/fcl");
+const {
+  applyFclToContainer,
+  emptyFcl,
+  withFclReceivedDate,
+} = require("../../lib/fcl");
 const { isAdminRole, isActiveFlag } = require("../../middleware/requireAdmin");
 const { vocSequenceFrom, formatVocNo } = require("../../lib/brand");
 
@@ -1484,6 +1488,9 @@ exports.payContainerBalance = async (req, res) => {
     const { id, containerId } = req.params;
     const { userid } = req.tokenData;
     const balanceDate = req.body.balanceDate || new Date();
+    const fclReceivedDate = req.body.fclReceivedDate
+      ? String(req.body.fclReceivedDate).trim()
+      : "";
 
     if (
       !mongoose.Types.ObjectId.isValid(id) ||
@@ -1537,17 +1544,25 @@ exports.payContainerBalance = async (req, res) => {
       });
     }
 
+    const $set = {
+      "containers.$.balancePaid":
+        Number(container.balancePaid || 0) + remaining,
+      "containers.$.balanceDate": balanceDate,
+      "containers.$.updatedBy": userid,
+      "containers.$.updatedAt": new Date(),
+    };
+
+    if (fclReceivedDate) {
+      const applied = withFclReceivedDate(container.fcl, fclReceivedDate);
+      if (applied.error) {
+        return res.status(400).json({ success: false, message: applied.error });
+      }
+      $set["containers.$.fcl"] = applied.fcl;
+    }
+
     const updatedAssignment = await AssignLorry.findOneAndUpdate(
       { _id: id, "containers._id": containerId },
-      {
-        $set: {
-          "containers.$.balancePaid":
-            Number(container.balancePaid || 0) + remaining,
-          "containers.$.balanceDate": balanceDate,
-          "containers.$.updatedBy": userid,
-          "containers.$.updatedAt": new Date(),
-        },
-      },
+      { $set },
       { new: true }
     );
 
@@ -1679,6 +1694,9 @@ exports.payContainersBalance = async (req, res) => {
       ? req.body.containerIds
       : [];
     const balanceDate = req.body.balanceDate || new Date();
+    const fclReceivedDate = req.body.fclReceivedDate
+      ? String(req.body.fclReceivedDate).trim()
+      : "";
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res
@@ -1700,6 +1718,7 @@ exports.payContainersBalance = async (req, res) => {
     }
 
     let paidCount = 0;
+    let fclError = "";
     containerIds.forEach((containerId) => {
       if (!mongoose.Types.ObjectId.isValid(containerId)) return;
       const container = assignment.containers.id(containerId);
@@ -1707,12 +1726,24 @@ exports.payContainersBalance = async (req, res) => {
       if (completedLockMessage(req.authRole, container)) return;
       const remaining = remainingHire(container);
       if (remaining <= 0) return;
+      if (fclReceivedDate) {
+        const applied = withFclReceivedDate(container.fcl, fclReceivedDate);
+        if (applied.error) {
+          fclError = applied.error;
+          return;
+        }
+        container.fcl = applied.fcl;
+      }
       container.balancePaid = Number(container.balancePaid || 0) + remaining;
       container.balanceDate = balanceDate;
       container.updatedBy = userid;
       container.updatedAt = new Date();
       paidCount += 1;
     });
+
+    if (fclError) {
+      return res.status(400).json({ success: false, message: fclError });
+    }
 
     if (!paidCount) {
       return res.status(400).json({
